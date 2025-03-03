@@ -1,7 +1,8 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env file
+load_dotenv(override=True)
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY")
@@ -11,6 +12,6 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     REDIS_URL = os.getenv("REDIS_URL")
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
 
 config = Config()

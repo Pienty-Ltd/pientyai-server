@@ -1,13 +1,6 @@
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base
 from app.core.config import config
-import logging
-
-logger = logging.getLogger(__name__)
-
-# Log the database URL for debugging (excluding sensitive info)
-parsed_url = config.DATABASE_URL.split('@')[-1] if config.DATABASE_URL else "None"
-logger.info(f"Connecting to database at: {parsed_url}")
 
 DATABASE_URL = config.DATABASE_URL
 
