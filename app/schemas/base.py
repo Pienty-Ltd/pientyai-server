@@ -1,18 +1,19 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Generic, TypeVar, Dict, Any, List
+import uuid
 
-class ItemBase(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
+T = TypeVar('T')
 
-class ItemCreate(ItemBase):
-    pass
-
-class ItemResponse(ItemBase):
-    id: int
-
-class MessageResponse(BaseModel):
-    message: str
 
 class ErrorResponse(BaseModel):
-    detail: str
+    message: Optional[str] = None
+    logout: bool = False
+    details: Optional[List[Dict[str, Any]]] = None
+
+
+class BaseResponse(BaseModel, Generic[T]):
+    data: Optional[T] = None
+    success: bool = True
+    message: Optional[str] = None
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    error: Optional[ErrorResponse] = None

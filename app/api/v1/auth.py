@@ -7,7 +7,8 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
 
-from app.schemas.response import BaseResponse, ErrorResponse
+from app.schemas.base import BaseResponse, ErrorResponse
+from app.schemas.response import LoginResponse
 from app.schemas.request import LoginRequest, RegisterRequest
 from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
@@ -22,23 +23,6 @@ class CustomAuthException(HTTPException):
     """Custom authentication exception that will be handled by the auth exception handler"""
     pass
 
-@router.exception_handler(CustomAuthException)
-async def auth_exception_handler(request: Request, exc: CustomAuthException):
-    logger.warning(f"Authentication exception: {exc.detail}")
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=BaseResponse(
-            success=False,
-            message="Authentication failed",
-            error=ErrorResponse(
-                message=str(exc.detail),
-                details=[{"msg": str(exc.detail)}]
-            )
-        ).dict(),
-        headers=exc.headers
-    )
-
-# Custom OAuth2 scheme that returns our BaseResponse format for authentication errors
 class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
     async def __call__(self, request: Request) -> Optional[str]:
         try:
@@ -52,10 +36,6 @@ class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
             )
 
 oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
                          db: AsyncSession = Depends(get_db)):
