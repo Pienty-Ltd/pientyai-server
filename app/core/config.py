@@ -1,24 +1,16 @@
-from pydantic_settings import BaseSettings
-from typing import List
-from datetime import datetime
-import pytz
+import os
+from dotenv import load_dotenv
 
-class Settings(BaseSettings):
-    # API Configuration
-    API_V1_STR: str = "/api/v1"
+load_dotenv()
 
-    # CORS Configuration
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:5000",
-        "http://0.0.0.0:5000",
-    ]
+class Config:
+    SECRET_KEY = os.getenv("SECRET_KEY")
+    TOKEN_ALGORITHM = "HS256"
+    TOKEN_EXPIRE = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
-    # Environment
-    DEBUG: bool = True
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-    def get_current_time(self) -> str:
-        """Returns current UTC time in ISO format"""
-        return datetime.now(pytz.UTC).isoformat()
+    REDIS_URL = os.getenv("REDIS_URL")
+    DATABASE_URL = os.getenv("DATABASE_URL")
 
-    class Config:
-        case_sensitive = True
+config = Config()

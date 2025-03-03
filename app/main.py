@@ -1,12 +1,19 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
 from app.api.v1.endpoints import router as v1_router
-from app.core.config import Settings
+from app.core.config import config
+from app.core.database import create_tables
 
-settings = Settings()
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="FastAPI Backend",
@@ -19,7 +26,7 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],  # Update with specific origins in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,6 +56,15 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "version": app.version,
-        "timestamp": settings.get_current_time()
+        "version": app.version
     }
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up FastAPI application...")
+    try:
+        await create_tables()
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Error creating database tables: {str(e)}")
+        raise
