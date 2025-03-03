@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Generic, TypeVar, Dict
+from typing import Optional, Generic, TypeVar, Dict, Any, List
 import uuid
 
 T = TypeVar('T')
@@ -7,6 +7,7 @@ T = TypeVar('T')
 class ErrorResponse(BaseModel):
     message: Optional[str] = None
     logout: bool = False
+    details: Optional[List[Dict[str, Any]]] = None
 
 class BaseResponse(BaseModel, Generic[T]):
     data: Optional[T] = None
