@@ -9,6 +9,9 @@ from app.schemas.base import (
 )
 from app.database.database_factory import get_db
 from app.core.redis_service import RedisService
+from app.database.repositories.user_repository import UserRepository
+from app.database.repositories.organization_repository import OrganizationRepository
+from app.database.models.db_models import User, Organization
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -77,3 +80,43 @@ async def delete_item(item_id: int):
         raise HTTPException(status_code=404, detail="Item not found")
     items.pop(item_id - 1)
     return {"message": "Item deleted successfully"}
+
+@router.post("/users/test", response_model=MessageResponse)
+async def test_user_creation(db: AsyncSession = Depends(get_db)):
+    try:
+        # Create a test user repository
+        user_repo = UserRepository(db)
+
+        # Test user data
+        test_user = {
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "fp": "test_fp_123",
+            "hashed_password": "hashed_password_here",
+            "is_active": True
+        }
+
+        # Create user
+        user = await user_repo.insert_user(test_user)
+        logger.info(f"Created test user with ID: {user.id}")
+
+        # Test organization repository
+        org_repo = OrganizationRepository(db)
+
+        # Create test organization
+        org_data = {
+            "name": "Test Law Firm",
+            "description": "A test law firm organization"
+        }
+
+        org = await org_repo.create_organization(org_data)
+        logger.info(f"Created test organization with ID: {org.id}")
+
+        # Add user to organization
+        await org_repo.add_user_to_organization(user, org)
+        logger.info(f"Added user {user.id} to organization {org.id}")
+
+        return {"message": "Test data created successfully"}
+    except Exception as e:
+        logger.error(f"Error in test endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
