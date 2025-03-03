@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from app.api.v1.auth import router as auth_router
+from app.api.v1.auth import router as auth_router, CustomAuthException
 from app.core.config import config
 from app.database.database_factory import create_tables
 from app.schemas.response import BaseResponse, ErrorResponse
@@ -54,6 +54,23 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
         ).dict()
     )
 
+# Authentication exception handler
+@app.exception_handler(CustomAuthException)
+async def auth_exception_handler(request: Request, exc: CustomAuthException):
+    logger.warning(f"Authentication exception: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=BaseResponse(
+            success=False,
+            message="Authentication failed",
+            error=ErrorResponse(
+                message=str(exc.detail),
+                details=[{"msg": str(exc.detail)}]
+            )
+        ).dict(),
+        headers=exc.headers
+    )
+
 # Global exception handler for unhandled exceptions
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -75,13 +92,11 @@ async def root():
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return BaseResponse(
-        data={"status": "healthy", "version": app.version}
-    )
+    return BaseResponse(data={"status": "healthy", "version": app.version})
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Starting up FastAPI application...")
+    logger.info("Starting up FastAPI Backend server...")
     try:
         await create_tables()
         logger.info("Database tables created successfully")
@@ -91,4 +106,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
