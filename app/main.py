@@ -6,22 +6,19 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.v1.endpoints import router as v1_router
 from app.core.config import config
-from app.core.database import create_tables
+from app.database.database_factory import create_tables
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="FastAPI Backend",
-    description="A FastAPI backend server with basic API structure",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = FastAPI(title="FastAPI Backend",
+              description="A FastAPI backend server with basic API structure",
+              version="1.0.0",
+              docs_url="/docs",
+              redoc_url="/redoc")
 
 # CORS middleware configuration
 app.add_middleware(
@@ -35,35 +32,38 @@ app.add_middleware(
 # Include routers
 app.include_router(v1_router, prefix="/api/v1")
 
+
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Validation Error",
-            "errors": [{"loc": err["loc"], "msg": err["msg"]} for err in exc.errors()]
-        }
-    )
+    return JSONResponse(status_code=422,
+                        content={
+                            "detail":
+                            "Validation Error",
+                            "errors": [{
+                                "loc": err["loc"],
+                                "msg": err["msg"]
+                            } for err in exc.errors()]
+                        })
+
 
 # Root endpoint
 @app.get("/")
 async def root():
     return {"message": "Welcome to FastAPI Backend"}
 
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "version": app.version
-    }
+    return {"status": "healthy", "version": app.version}
+
 
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up FastAPI application...")
     try:
-        await create_tables()
+        #await create_tables()
         logger.info("Database tables created successfully")
     except Exception as e:
         logger.error(f"Error creating database tables: {str(e)}")

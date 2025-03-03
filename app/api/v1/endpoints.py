@@ -7,7 +7,7 @@ from app.schemas.base import (
     ItemResponse,
     MessageResponse
 )
-from app.core.database import get_db
+from app.database.database_factory import get_db
 from app.core.redis_service import RedisService
 
 router = APIRouter()
