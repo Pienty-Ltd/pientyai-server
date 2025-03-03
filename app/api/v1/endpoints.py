@@ -13,7 +13,7 @@ from app.database.repositories.user_repository import UserRepository
 from app.database.repositories.organization_repository import OrganizationRepository
 from app.database.models.db_models import User, Organization
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
 
 # In-memory storage for demonstration
