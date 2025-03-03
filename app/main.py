@@ -14,8 +14,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Legal AI SaaS Backend",
-              description="Backend server for Legal AI SaaS platform",
+app = FastAPI(title="Pienty.AI API",
+              description="Pienty.AI API",
               version="1.0.0",
               docs_url="/docs",
               redoc_url="/redoc")
@@ -32,28 +32,32 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 
+
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Validation Error",
-            "errors": [{
-                "loc": err["loc"],
-                "msg": err["msg"]
-            } for err in exc.errors()]
-        })
+    return JSONResponse(status_code=422,
+                        content={
+                            "detail":
+                            "Validation Error",
+                            "errors": [{
+                                "loc": err["loc"],
+                                "msg": err["msg"]
+                            } for err in exc.errors()]
+                        })
+
 
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "Welcome to Legal AI SaaS Backend"}
+    return {"message": "Welcome to Pienty.AI API"}
+
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "version": app.version}
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -64,6 +68,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error creating database tables: {str(e)}")
         raise
+
 
 # Only used when running directly with Python
 if __name__ == "__main__":

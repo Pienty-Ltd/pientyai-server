@@ -6,17 +6,17 @@ class OrganizationRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_organization_by_id(self, org_id: int):
+    async def get_organization_by_fp(self, org_fp: str):
         result = await self.db.execute(
-            select(Organization).filter(Organization.id == org_id)
+            select(Organization).filter(Organization.fp == org_fp)
         )
         return result.scalar_one_or_none()
 
-    async def get_organizations_by_user(self, user_id: int):
+    async def get_organizations_by_user(self, user_fp: str):
         result = await self.db.execute(
             select(Organization)
             .join(Organization.users)
-            .filter(User.id == user_id)
+            .filter(User.fp == user_fp)
         )
         return result.scalars().all()
 

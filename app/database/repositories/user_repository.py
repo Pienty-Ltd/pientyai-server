@@ -25,9 +25,11 @@ class UserRepository:
         await self.db.refresh(user)
         return user
 
-    async def update_user(self, user_id: int, updates: dict):
-        await self.db.execute(
-            select(User).where(User.id == user_id).update(updates, synchronize_session="fetch")
-        )
-        await self.db.commit()
-        return await self.get_user_by_id(user_id)
+    async def update_user(self, user_fp: str, updates: dict):
+        user = await self.get_user_by_fp(user_fp)
+        if user:
+            for key, value in updates.items():
+                setattr(user, key, value)
+            await self.db.commit()
+            await self.db.refresh(user)
+        return user

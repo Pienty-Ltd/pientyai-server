@@ -4,6 +4,8 @@ import bcrypt
 from jose import jwt, JWTError
 from app.core.config import config
 import logging
+from app.core.redis_service import RedisService
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -54,3 +56,34 @@ def decode_access_token(token: str) -> Optional[dict]:
     except JWTError as e:
         logger.warning(f"Failed to decode token: {str(e)}")
         return None
+
+async def cache_user_data(user_data: dict) -> None:
+    """Cache user data in Redis."""
+    try:
+        redis_service = await RedisService.get_instance()
+        user_key = f"user:{user_data['fp']}"
+        # Cache for 24 hours
+        await redis_service.set_value(
+            key=user_key,
+            value=json.dumps(user_data),
+            expire=86400
+        )
+        logger.debug(f"Cached user data for fp: {user_data['fp']}")
+    except Exception as e:
+        logger.error(f"Error caching user data: {str(e)}")
+        # Don't raise the exception as caching failure shouldn't break the app
+        pass
+
+async def get_cached_user_data(user_fp: str) -> Optional[dict]:
+    """Get cached user data from Redis."""
+    try:
+        redis_service = await RedisService.get_instance()
+        user_key = f"user:{user_fp}"
+        cached_data = await redis_service.get_value(user_key)
+        if cached_data:
+            logger.info(f"Retrieved user data from Redis cache for fp: {user_fp}")
+            return json.loads(cached_data)
+        logger.debug(f"No cached data found in Redis for fp: {user_fp}")
+    except Exception as e:
+        logger.error(f"Error retrieving cached user data: {str(e)}")
+    return None
