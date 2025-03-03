@@ -6,7 +6,7 @@ channel = "stable-24_05"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "gunicorn --bind 0.0.0.0:8080 main:app"]
+run = ["sh", "-c", "uvicorn app.main:app --reload --host 0.0.0.0 --port 8080"]
 
 [workflows]
 runButton = "Project"
@@ -32,15 +32,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "lsof -i :8080 | grep LISTEN"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pkill -f \"gunicorn\""
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "gunicorn --bind 0.0.0.0:8080 --reuse-port --reload main:app"
+args = "uvicorn app.main:app --reload --host 0.0.0.0 --port 8080"
 
 [[ports]]
 localPort = 8080
