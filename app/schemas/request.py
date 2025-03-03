@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, Dict, Any
 
 class LoginRequest(BaseModel):
     email: EmailStr = Field(..., description="User's email address")
@@ -13,3 +13,4 @@ class RegisterRequest(BaseModel):
 class PaymentIntentRequest(BaseModel):
     amount: int = Field(..., gt=0, description="Amount in cents to charge", example=1000)
     currency: str = Field(default="usd", description="Currency code", example="usd")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata for the payment")

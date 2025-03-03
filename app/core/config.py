@@ -26,6 +26,8 @@ class Config:
     STRIPE_TEST_SECRET_KEY = os.getenv("STRIPE_TEST_SECRET_KEY")
     STRIPE_LIVE_PUBLIC_KEY = os.getenv("STRIPE_LIVE_PUBLIC_KEY")
     STRIPE_LIVE_SECRET_KEY = os.getenv("STRIPE_LIVE_SECRET_KEY")
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")  # Added webhook secret
+    STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")  # Added subscription price ID
 
 config = Config()
 
