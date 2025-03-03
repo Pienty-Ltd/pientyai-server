@@ -3,6 +3,7 @@ import asyncio
 from typing import Optional
 from app.core.config import config
 
+
 class RedisService:
     _client: Optional[redis.Redis] = None
     _lock = asyncio.Lock()
@@ -13,7 +14,8 @@ class RedisService:
     async def get_client(self) -> redis.Redis:
         async with self._lock:
             if self._client is None or self._client.closed:
-                self._client = await redis.from_url(self.redis_url, decode_responses=True)
+                self._client = await redis.from_url(self.redis_url,
+                                                    decode_responses=True)
                 try:
                     await asyncio.wait_for(self._client.ping(), timeout=5)
                 except asyncio.TimeoutError:
@@ -24,7 +26,10 @@ class RedisService:
                     raise Exception(f"Redis connection failed: {e}")
         return self._client
 
-    async def set_value(self, key: str, value: str, expire: Optional[int] = None) -> None:
+    async def set_value(self,
+                        key: str,
+                        value: str,
+                        expire: Optional[int] = None) -> None:
         """
         Set value for the specified key
         :param key: Key name

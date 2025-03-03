@@ -1,53 +1,128 @@
-from fastapi import APIRouter, HTTPException, Depends
+import logging
+from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timedelta
+
 from app.schemas.response import BaseResponse, ErrorResponse
+from app.schemas.request import LoginRequest, RegisterRequest
 from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
+from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token
 from typing import Optional
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth")
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+@router.post("/register", response_model=BaseResponse[LoginResponse])
+async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        user_repo = UserRepository(db)
+        existing_user = await user_repo.get_user_by_email(request.email)
+
+        if existing_user:
+            logger.warning(f"Registration attempt with existing email: {request.email}")
+            return BaseResponse(
+                success=False,
+                message="Registration failed",
+                error=ErrorResponse(message="Email already registered")
+            )
+
+        # Create new user with hashed password
+        hashed_password = get_password_hash(request.password)
+        user_data = {
+            "email": request.email,
+            "hashed_password": hashed_password,
+            "full_name": request.full_name,
+            "is_active": True
+        }
+
+        user = await user_repo.insert_user(user_data)
+        logger.info(f"New user registered successfully: {request.email}")
+
+        # Generate access token
+        access_token = create_access_token(
+            data={"sub": user.email}
+        )
+
+        return BaseResponse(
+            data=LoginResponse(access_token=access_token),
+            message="Registration successful"
+        )
+
+    except Exception as e:
+        logger.error(f"Registration error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message=str(e))
+        )
 
 @router.post("/login", response_model=BaseResponse[LoginResponse])
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         user_repo = UserRepository(db)
         user = await user_repo.get_user_by_email(request.email)
-        
-        if not user:
+
+        if not user or not verify_password(request.password, user.hashed_password):
+            logger.warning(f"Failed login attempt for email: {request.email}")
             return BaseResponse(
                 success=False,
-                message="Invalid credentials",
-                error=ErrorResponse(message="User not found")
+                message="Login failed",
+                error=ErrorResponse(message="Invalid credentials")
             )
-            
-        # TODO: Add password verification
-        # For now, return a mock token
+
+        access_token = create_access_token(
+            data={"sub": user.email}
+        )
+
+        logger.info(f"Successful login for user: {request.email}")
         return BaseResponse(
-            data=LoginResponse(
-                access_token="mock_token",
-                token_type="bearer"
-            ),
+            data=LoginResponse(access_token=access_token),
             message="Login successful"
         )
+
     except Exception as e:
+        logger.error(f"Login error: {str(e)}")
         return BaseResponse(
             success=False,
             error=ErrorResponse(message=str(e))
         )
 
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    token_data = decode_access_token(token)
+    if not token_data or "sub" not in token_data:
+        logger.warning("Invalid token data during authentication")
+        raise credentials_exception
+
+    user_repo = UserRepository(db)
+    user = await user_repo.get_user_by_email(token_data["sub"])
+    if not user:
+        logger.warning(f"User not found for token subject: {token_data['sub']}")
+        raise credentials_exception
+
+    logger.debug(f"Successfully authenticated user: {user.email}")
+    return user
+
 @router.get("/me", response_model=BaseResponse[dict])
-async def get_current_user():
-    # TODO: Implement user verification from token
+async def get_user_me(current_user = Depends(get_current_user)):
     return BaseResponse(
-        data={"username": "test_user"},
+        data={
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "is_active": current_user.is_active
+        },
         message="User details retrieved successfully"
     )
