@@ -4,7 +4,7 @@ import bcrypt
 from jose import jwt, JWTError
 from app.core.config import config
 import logging
-from app.core.redis_service import RedisService
+from app.core.services.redis_service import RedisService
 import json
 
 logger = logging.getLogger(__name__)

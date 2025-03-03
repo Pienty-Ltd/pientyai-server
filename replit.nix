@@ -1,5 +1,9 @@
 {pkgs}: {
   deps = [
+    pkgs.glibcLocales
+    pkgs.pkg-config
+    pkgs.libffi
+    pkgs.cacert
     pkgs.rustc
     pkgs.libiconv
     pkgs.cargo

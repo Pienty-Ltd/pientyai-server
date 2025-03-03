@@ -10,20 +10,17 @@ from app.core.config import config
 from app.database.database_factory import create_tables
 from app.schemas.base import BaseResponse, ErrorResponse
 
-project_name = "Pienty.AI"
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format=
-    f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=f"{project_name} API",
-              description=f"{project_name} API",
-              version="1.0.0",
-              docs_url="/docs",
-              redoc_url="/redoc")
+app = FastAPI(
+    title="FastAPI Backend",
+    description="FastAPI Backend API",
+    version="1.0.0",
+    docs_url="/docs" if not config.API_PRODUCTION else None,
+    redoc_url="/redoc" if not config.API_PRODUCTION else None,
+    debug=not config.API_PRODUCTION
+)
 
 # CORS middleware configuration
 app.add_middleware(
@@ -37,55 +34,59 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 
-
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):
     logger.warning(f"Validation error: {str(exc)}")
-    return JSONResponse(status_code=422,
-                        content=BaseResponse(
-                            success=False,
-                            message="Validation Error",
-                            error=ErrorResponse(message="Invalid request data",
-                                                details=[{
-                                                    "loc": err["loc"],
-                                                    "msg": err["msg"]
-                                                } for err in exc.errors()
-                                                         ])).dict())
-
+    return JSONResponse(
+        status_code=422,
+        content=BaseResponse(
+            success=False,
+            message="Validation Error",
+            error=ErrorResponse(
+                message="Invalid request data",
+                details=[{
+                    "loc": err["loc"],
+                    "msg": err["msg"]
+                } for err in exc.errors()]
+            )
+        ).dict()
+    )
 
 # Authentication exception handler
 @app.exception_handler(CustomAuthException)
 async def auth_exception_handler(request: Request, exc: CustomAuthException):
     logger.warning(f"Authentication exception: {exc.detail}")
-    return JSONResponse(status_code=exc.status_code,
-                        content=BaseResponse(success=False,
-                                             message="Authentication failed",
-                                             error=ErrorResponse(
-                                                 message=str(exc.detail),
-                                                 details=[{
-                                                     "msg":
-                                                     str(exc.detail)
-                                                 }])).dict(),
-                        headers=exc.headers)
-
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=BaseResponse(
+            success=False,
+            message="Authentication failed",
+            error=ErrorResponse(
+                message=str(exc.detail),
+                details=[{"msg": str(exc.detail)}]
+            )
+        ).dict(),
+        headers=exc.headers
+    )
 
 # Handle FastAPI's built-in HTTPException (including 401 Unauthorized)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     logger.warning(f"HTTP exception: {exc.detail}")
-    return JSONResponse(status_code=exc.status_code,
-                        content=BaseResponse(success=False,
-                                             message="Request failed",
-                                             error=ErrorResponse(
-                                                 message=str(exc.detail),
-                                                 details=[{
-                                                     "msg":
-                                                     str(exc.detail)
-                                                 }])).dict(),
-                        headers=getattr(exc, 'headers', None))
-
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=BaseResponse(
+            success=False,
+            message="Request failed",
+            error=ErrorResponse(
+                message=str(exc.detail),
+                details=[{"msg": str(exc.detail)}]
+            )
+        ).dict(),
+        headers=getattr(exc, 'headers', None)
+    )
 
 # Global exception handler for unhandled exceptions
 @app.exception_handler(Exception)
@@ -96,25 +97,23 @@ async def global_exception_handler(request: Request, exc: Exception):
         content=BaseResponse(
             success=False,
             message="Internal Server Error",
-            error=ErrorResponse(
-                message="An unexpected error occurred")).dict())
-
+            error=ErrorResponse(message="An unexpected error occurred")
+        ).dict()
+    )
 
 # Root endpoint
 @app.get("/")
 async def root():
-    return BaseResponse(message=f"Welcome to {project_name} API")
-
+    return BaseResponse(message="Welcome to FastAPI Backend API")
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     return BaseResponse(data={"status": "healthy", "version": app.version})
 
-
 @app.on_event("startup")
 async def startup_event():
-    logger.info(f"Starting up {project_name} server...")
+    logger.info("Starting up FastAPI Backend server...")
     try:
         await create_tables()
         logger.info("Database tables created successfully")
@@ -122,7 +121,11 @@ async def startup_event():
         logger.error(f"Error creating database tables: {str(e)}")
         raise
 
-
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8080,
+        reload=not config.API_PRODUCTION
+    )
