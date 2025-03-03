@@ -6,7 +6,6 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
-
 from app.schemas.base import BaseResponse, ErrorResponse
 from app.schemas.response import LoginResponse
 from app.schemas.request import LoginRequest, RegisterRequest
@@ -15,6 +14,7 @@ from app.database.repositories.user_repository import UserRepository
 from app.core.security import (get_password_hash, verify_password,
                              create_access_token, decode_access_token,
                              cache_user_data, get_cached_user_data)
+from app.database.repositories.subscription_repository import SubscriptionRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth")
@@ -109,8 +109,19 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "is_active": True
         }
 
+        # Create user first
         user = await user_repo.insert_user(user_data)
         logger.info(f"New user registered successfully: {request.email} with fp: {user.fp}")
+
+        try:
+            # Start trial period
+            subscription_repo = SubscriptionRepository(db)
+            await subscription_repo.create_trial_subscription(user.id)
+            logger.info(f"Trial subscription created for user: {user.email}")
+        except Exception as e:
+            logger.error(f"Error creating trial subscription: {str(e)}")
+            # Continue with user creation even if subscription creation fails
+            # We can handle this case later through admin panel or background job
 
         # Cache user data
         user_cache_data = {
