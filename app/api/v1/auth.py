@@ -43,13 +43,11 @@ class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
 oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
-                         db: AsyncSession = Depends(get_db),
-                         require_admin: bool = False):
+                         db: AsyncSession = Depends(get_db)):
     """
-    Get current authenticated user with optional admin requirement
+    Get current authenticated user
     :param token: JWT token
     :param db: Database session
-    :param require_admin: If True, only allows admin users
     :return: User object
     """
     try:
@@ -100,14 +98,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             }
             await cache_user_data(user_cache_data)
 
-        # Check admin requirement
-        if require_admin and user.role != UserRole.ADMIN:
-            logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin privileges required"
-            )
-
         logger.debug(f"Successfully authenticated user: {user.email}")
         return user
 
@@ -120,6 +110,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             detail="Authentication failed",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+def admin_required(user = Depends(get_current_user)):
+    """
+    Dependency wrapper that checks if the user has admin role
+    This doesn't add any parameters to the OpenAPI schema
+    """
+    if user.role != UserRole.ADMIN:
+        logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return user
 
 @router.post("/register", response_model=BaseResponse[LoginResponse], 
             summary="Register new user",

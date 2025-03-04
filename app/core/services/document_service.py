@@ -17,6 +17,9 @@ from app.database.database_factory import async_session_maker
 logger = logging.getLogger(__name__)
 
 class DocumentService:
+    CHUNK_SIZE = 1000  # Characters per chunk
+    BATCH_SIZE = 20    # Number of chunks to process in one batch
+
     def __init__(self):
         self.s3_client = boto3.client(
             's3',
@@ -37,6 +40,7 @@ class DocumentService:
     ) -> Tuple[File, List[KnowledgeBase]]:
         """
         Process uploaded document: upload to S3, extract text, create embeddings
+        Implements chunking and batch processing for better performance
         """
         # Initialize file record
         db_file = File(
@@ -64,27 +68,49 @@ class DocumentService:
                 db_file.status = FileStatus.FAILED
                 raise
 
-            # Extract text content
+            # Extract text content and split into chunks
             text_chunks = await self._extract_text_chunks(file, file_type)
+            logger.info(f"Extracted {len(text_chunks)} chunks from document")
 
-            # Generate embeddings
-            embeddings = await self.openai_service.create_embeddings(text_chunks)
+            # Process chunks in batches
+            chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
+                           for i in range(0, len(text_chunks), self.BATCH_SIZE)]
 
-            # Create knowledge base entries
-            for idx, (chunk, embedding) in enumerate(zip(text_chunks, embeddings)):
-                kb_entry = KnowledgeBase(
-                    chunk_index=idx,
-                    content=chunk,
-                    embedding=embedding,
-                    meta_info=json.dumps({  # metadata -> meta_info
-                        "filename": filename,
-                        "chunk_number": idx + 1,
-                        "total_chunks": len(text_chunks)
-                    }),
-                    file_id=db_file.id,
-                    organization_id=organization_id
-                )
-                knowledge_base_entries.append(kb_entry)
+            async with async_session_maker() as session:
+                for batch_idx, chunk_batch in enumerate(chunk_batches):
+                    try:
+                        # Generate embeddings for the batch
+                        embeddings = await self.openai_service.create_embeddings(chunk_batch)
+                        logger.info(f"Generated embeddings for batch {batch_idx + 1}/{len(chunk_batches)}")
+
+                        # Create knowledge base entries for the batch
+                        batch_entries = []
+                        start_idx = batch_idx * self.BATCH_SIZE
+                        for idx, (chunk, embedding) in enumerate(zip(chunk_batch, embeddings)):
+                            kb_entry = KnowledgeBase(
+                                chunk_index=start_idx + idx,
+                                content=chunk,
+                                embedding=embedding,
+                                meta_info=json.dumps({
+                                    "filename": filename,
+                                    "chunk_number": start_idx + idx + 1,
+                                    "total_chunks": len(text_chunks)
+                                }),
+                                file_id=db_file.id,
+                                organization_id=organization_id
+                            )
+                            batch_entries.append(kb_entry)
+                            knowledge_base_entries.append(kb_entry)
+
+                        # Bulk insert the batch
+                        session.add_all(batch_entries)
+                        await session.commit()
+                        logger.info(f"Saved batch {batch_idx + 1} to database")
+
+                    except Exception as e:
+                        logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
+                        # Continue with next batch despite errors
+                        continue
 
             db_file.status = FileStatus.COMPLETED
             return db_file, knowledge_base_entries
@@ -93,6 +119,96 @@ class DocumentService:
             logger.error(f"Error processing document: {str(e)}")
             if db_file:
                 db_file.status = FileStatus.FAILED
+            raise
+
+    async def _extract_text_chunks(
+        self,
+        file: BinaryIO,
+        file_type: str,
+        min_chunk_size: int = 100  # Minimum characters per chunk
+    ) -> List[str]:
+        """
+        Extract text from document and split into optimally sized chunks
+        """
+        text = ""
+        file_type = file_type.lower()
+
+        try:
+            if file_type == "pdf":
+                reader = PdfReader(file)
+                for page in reader.pages:
+                    extracted_text = page.extract_text()
+                    if extracted_text:
+                        text += extracted_text + "\n"
+                    else:
+                        logger.warning(f"Empty text extracted from PDF page")
+
+            elif file_type in ["docx", "doc"]:
+                doc = Document(file)
+                for para in doc.paragraphs:
+                    if para.text:
+                        text += para.text + "\n"
+
+            else:
+                raise ValueError(f"Unsupported file type: {file_type}")
+
+            if not text.strip():
+                raise ValueError("No text content extracted from document")
+
+            # Implement smart chunking
+            chunks = []
+            current_chunk = []
+            current_length = 0
+
+            # Split text into sentences first
+            sentences = text.replace("\n", " ").split(". ")
+
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+
+                sentence_length = len(sentence)
+
+                # If a single sentence exceeds chunk size, split it into smaller parts
+                if sentence_length > self.CHUNK_SIZE:
+                    words = sentence.split()
+                    temp_chunk = []
+                    temp_length = 0
+
+                    for word in words:
+                        word_length = len(word) + 1  # +1 for space
+                        if temp_length + word_length > self.CHUNK_SIZE:
+                            if temp_chunk:  # Only add non-empty chunks
+                                chunks.append(" ".join(temp_chunk))
+                            temp_chunk = [word]
+                            temp_length = word_length
+                        else:
+                            temp_chunk.append(word)
+                            temp_length += word_length
+
+                    if temp_chunk:
+                        chunks.append(" ".join(temp_chunk))
+
+                # For normal sentences, try to keep them together in chunks
+                elif current_length + sentence_length + 1 <= self.CHUNK_SIZE:
+                    current_chunk.append(sentence)
+                    current_length += sentence_length + 1
+                else:
+                    if current_chunk and current_length >= min_chunk_size:
+                        chunks.append(". ".join(current_chunk) + ".")
+                    current_chunk = [sentence]
+                    current_length = sentence_length
+
+            # Add the last chunk if it meets minimum size
+            if current_chunk and current_length >= min_chunk_size:
+                chunks.append(". ".join(current_chunk) + ".")
+
+            logger.info(f"Successfully extracted {len(chunks)} text chunks")
+            return chunks
+
+        except Exception as e:
+            logger.error(f"Error extracting text from document: {str(e)}")
             raise
 
     async def search_documents(
@@ -149,67 +265,6 @@ class DocumentService:
 
         except Exception as e:
             logger.error(f"Error fetching organization documents: {str(e)}")
-            raise
-
-    async def _extract_text_chunks(
-        self,
-        file: BinaryIO,
-        file_type: str,
-        chunk_size: int = 1000
-    ) -> List[str]:
-        """
-        Extract text from document and split into chunks
-        """
-        text = ""
-        file_type = file_type.lower()
-
-        try:
-            if file_type == "pdf":
-                reader = PdfReader(file)
-                for page in reader.pages:
-                    extracted_text = page.extract_text()
-                    if extracted_text:
-                        text += extracted_text + "\n"
-                    else:
-                        logger.warning(f"Empty text extracted from PDF page")
-
-            elif file_type in ["docx", "doc"]:
-                doc = Document(file)
-                for para in doc.paragraphs:
-                    if para.text:
-                        text += para.text + "\n"
-
-            else:
-                raise ValueError(f"Unsupported file type: {file_type}")
-
-            if not text.strip():
-                raise ValueError("No text content extracted from document")
-
-            # Split text into chunks
-            words = text.split()
-            chunks = []
-            current_chunk = []
-            current_length = 0
-
-            for word in words:
-                word_length = len(word) + 1  # +1 for space
-                if current_length + word_length > chunk_size:
-                    if current_chunk:  # Only add non-empty chunks
-                        chunks.append(" ".join(current_chunk))
-                    current_chunk = [word]
-                    current_length = word_length
-                else:
-                    current_chunk.append(word)
-                    current_length += word_length
-
-            if current_chunk:
-                chunks.append(" ".join(current_chunk))
-
-            logger.info(f"Successfully extracted {len(chunks)} text chunks")
-            return chunks
-
-        except Exception as e:
-            logger.error(f"Error extracting text from document: {str(e)}")
             raise
 
     async def get_file_from_s3(self, s3_key: str) -> Optional[bytes]:

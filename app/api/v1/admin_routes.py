@@ -4,7 +4,7 @@ from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
 from app.database.repositories.promo_code_repository import PromoCodeRepository
 from app.schemas.base import BaseResponse, ErrorResponse
-from app.api.v1.auth import get_current_user
+from app.api.v1.auth import admin_required
 from app.database.models.db_models import UserRole
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -41,7 +41,7 @@ class PromoCodeStatsResponse(BaseModel):
 async def create_admin_user(
     request: CreateAdminRequest,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(lambda: get_current_user(require_admin=True))
+    current_user = Depends(admin_required)
 ):
     """
     Create a new admin user with:
@@ -91,7 +91,7 @@ async def create_admin_user(
            description="Get detailed statistics for all promo codes")
 async def get_promo_code_stats(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(lambda: get_current_user(require_admin=True))
+    current_user = Depends(admin_required)
 ):
     """
     Retrieve statistics for all promo codes:
@@ -131,7 +131,7 @@ async def get_promo_code_stats(
 async def deactivate_promo_code(
     code_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(lambda: get_current_user(require_admin=True))
+    current_user = Depends(admin_required)
 ):
     """
     Deactivate a promo code by its ID:
