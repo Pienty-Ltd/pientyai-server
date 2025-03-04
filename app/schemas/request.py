@@ -14,3 +14,4 @@ class PaymentIntentRequest(BaseModel):
     amount: int = Field(..., gt=0, description="Amount in cents to charge", example=1000)
     currency: str = Field(default="usd", description="Currency code", example="usd")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata for the payment")
+    promo_code: Optional[str] = Field(default=None, description="Optional promo code to apply to the payment")

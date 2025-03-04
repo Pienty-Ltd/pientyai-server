@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.database_factory import get_db
 from app.database.repositories.payment_repository import PaymentRepository
+from app.database.repositories.promo_code_repository import PromoCodeRepository
 from app.database.repositories.subscription_repository import SubscriptionRepository
 from app.schemas.base import BaseResponse, ErrorResponse
 from app.schemas.request import PaymentIntentRequest
@@ -15,16 +16,66 @@ from app.api.v1.utils.payment_utils import create_payment_record
 import logging
 import stripe
 from app.core.config import config
+from typing import Optional
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/payments")
+
+class PaymentIntentWithPromoRequest(PaymentIntentRequest):
+    promo_code: Optional[str] = None
+
+@router.post("/create-payment-intent")
+async def create_payment_intent(
+    request: PaymentIntentWithPromoRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Create a payment intent with optional promo code"""
+    try:
+        # Prepare metadata
+        metadata = {
+            "user_fp": current_user.fp,
+            "user_email": current_user.email,
+        }
+        # Update metadata with additional data if provided
+        if request.metadata:
+            metadata.update(request.metadata)
+
+        payment_repo = PaymentRepository(db)
+        promo_repo = None
+        if request.promo_code:
+            promo_repo = PromoCodeRepository(db)
+
+        return await create_payment_record(
+            user_id=current_user.id,
+            amount=request.amount,
+            currency=request.currency,
+            metadata=metadata,
+            payment_repo=payment_repo,
+            promo_code=request.promo_code,
+            promo_repo=promo_repo
+        )
+
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message=str(e))
+        )
+    except Exception as e:
+        logger.error(f"Error creating payment intent: {str(e)}", exc_info=True)
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message="Failed to create payment intent")
+        )
 
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db)
-) -> BaseResponse:
+):
     """Handle Stripe webhook events"""
     try:
         # Get the webhook signature from headers
@@ -103,42 +154,4 @@ async def stripe_webhook(
         return BaseResponse(
             success=False,
             error=ErrorResponse(message="Error processing webhook")
-        )
-
-@router.post("/create-payment-intent")
-async def create_payment_intent(
-    request: PaymentIntentRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Create a payment intent"""
-    try:
-        # Prepare metadata
-        metadata = {
-            "user_fp": current_user.fp,
-            "user_email": current_user.email,
-        }
-        # Update metadata with additional data if provided
-        if request.metadata:
-            metadata.update(request.metadata)
-
-        return await create_payment_record(
-            user_id=current_user.id,
-            amount=request.amount,
-            currency=request.currency,
-            metadata=metadata,
-            payment_repo=PaymentRepository(db)
-        )
-
-    except stripe.error.StripeError as e:
-        logger.error(f"Stripe error: {str(e)}")
-        return BaseResponse(
-            success=False,
-            error=ErrorResponse(message=str(e))
-        )
-    except Exception as e:
-        logger.error(f"Error creating payment intent: {str(e)}", exc_info=True)
-        return BaseResponse(
-            success=False,
-            error=ErrorResponse(message="Failed to create payment intent")
         )
