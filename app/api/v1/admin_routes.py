@@ -12,7 +12,12 @@ from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/admin")
+router = APIRouter(
+    prefix="/api/v1/admin",
+    tags=["Admin"],
+    responses={404: {"description": "Not found"}},
+    description="Administrative operations and management features"
+)
 
 class CreateAdminRequest(BaseModel):
     email: EmailStr
@@ -31,13 +36,22 @@ class PromoCodeStatsResponse(BaseModel):
     total_discount_amount: float
     active_users: int
 
-@router.post("/users/create-admin", response_model=BaseResponse[AdminUserResponse])
+@router.post("/users/create-admin", response_model=BaseResponse[AdminUserResponse],
+            summary="Create admin user",
+            description="Create a new user with administrative privileges")
 async def create_admin_user(
     request: CreateAdminRequest,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
-    """Create a new admin user (only accessible by existing admins)"""
+    """
+    Create a new admin user with:
+    - email: Admin's email address
+    - password: Secure password
+    - full_name: Admin's full name
+
+    Note: Only existing admins can create new admin users
+    """
     try:
         user_repo = UserRepository(db)
         existing_user = await user_repo.get_user_by_email(request.email)
@@ -73,12 +87,20 @@ async def create_admin_user(
             error=ErrorResponse(message="Failed to create admin user")
         )
 
-@router.get("/promo-codes/stats", response_model=BaseResponse[List[PromoCodeStatsResponse]])
+@router.get("/promo-codes/stats", response_model=BaseResponse[List[PromoCodeStatsResponse]],
+           summary="Get promo code statistics",
+           description="Get detailed statistics for all promo codes")
 async def get_promo_code_stats(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
-    """Get statistics for all promo codes"""
+    """
+    Retrieve statistics for all promo codes:
+    - Usage count
+    - Total discount amount
+    - Number of unique users
+    - Active status
+    """
     try:
         repo = PromoCodeRepository(db)
         promo_codes = await repo.list_active_promo_codes()
@@ -104,13 +126,20 @@ async def get_promo_code_stats(
             error=ErrorResponse(message="Failed to fetch promo code statistics")
         )
 
-@router.post("/promo-codes/{code_id}/deactivate")
+@router.post("/promo-codes/{code_id}/deactivate",
+            summary="Deactivate promo code",
+            description="Deactivate a specific promo code")
 async def deactivate_promo_code(
     code_id: int,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
-    """Deactivate a promo code"""
+    """
+    Deactivate a promo code by its ID:
+    - code_id: ID of the promo code to deactivate
+
+    Note: This action cannot be undone
+    """
     try:
         repo = PromoCodeRepository(db)
         result = await repo.deactivate_promo_code(code_id)

@@ -12,7 +12,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/promos")
+router = APIRouter(
+    prefix="/api/v1/promos",
+    tags=["Promo Codes"],
+    responses={404: {"description": "Not found"}},
+    description="Promo code management and validation operations"
+)
 
 class PromoCodeCreate(BaseModel):
     code: str
@@ -33,13 +38,22 @@ class PromoUsageHistory(BaseModel):
     amount: Decimal
     discount_amount: Decimal
 
-@router.post("/create")
+@router.post("/create",
+            summary="Create promo code",
+            description="Create a new promotional code with specified parameters")
 async def create_promo_code(
     promo: PromoCodeCreate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
-    """Create a new promo code"""
+    """
+    Create a new promo code with:
+    - code: Unique promo code string
+    - discount_type: Type of discount (percentage/fixed/full)
+    - discount_value: Amount or percentage of discount
+    - max_uses: Maximum total uses allowed
+    - max_uses_per_user: Maximum uses per user
+    """
     try:
         logger.info(f"Creating new promo code: {promo.code}")
         repo = PromoCodeRepository(db)
@@ -64,13 +78,21 @@ async def create_promo_code(
             error=ErrorResponse(message=str(e))
         )
 
-@router.post("/validate")
+@router.post("/validate",
+            summary="Validate promo code",
+            description="Validate a promo code and calculate potential discount")
 async def validate_promo_code(
     data: PromoCodeValidate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Validate a promo code and return discount information"""
+    """
+    Validate a promo code and calculate discount:
+    - code: Promo code to validate
+    - amount: Original amount in cents
+
+    Returns discount information and remaining uses
+    """
     try:
         logger.info(f"Validating promo code: {data.code}")
         repo = PromoCodeRepository(db)
@@ -165,14 +187,22 @@ async def apply_promo_code(
             error=ErrorResponse(message=str(e))
         )
 
-@router.get("/history")
+@router.get("/history",
+           summary="Get usage history",
+           description="Get user's promo code usage history")
 async def get_promo_usage_history(
     limit: int = 10,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Get user's promo code usage history"""
+    """
+    Get user's promo code usage history:
+    - limit: Maximum number of records to return
+    - offset: Number of records to skip
+
+    Returns list of promo code usages with amounts and dates
+    """
     try:
         logger.info(f"Fetching promo code usage history for user {current_user.id}")
         repo = PromoCodeRepository(db)

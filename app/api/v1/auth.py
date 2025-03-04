@@ -18,7 +18,12 @@ from app.database.repositories.subscription_repository import SubscriptionReposi
 from app.database.models.db_models import UserRole
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/auth")
+router = APIRouter(
+    prefix="/api/v1/auth",
+    tags=["Authentication"],
+    responses={404: {"description": "Not found"}},
+    description="Authentication and user management operations"
+)
 
 class CustomAuthException(HTTPException):
     """Custom authentication exception that will be handled by the auth exception handler"""
@@ -117,9 +122,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             headers={"WWW-Authenticate": "Bearer"}
         )
 
-@router.post("/register", response_model=BaseResponse[LoginResponse])
+@router.post("/register", response_model=BaseResponse[LoginResponse], 
+            summary="Register new user",
+            description="Register a new user with email and password. Creates a trial subscription automatically.")
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Register a new user"""
+    """
+    Register a new user with the following information:
+    - email: Valid email address
+    - password: Minimum 8 characters
+    - full_name: User's full name
+
+    Returns:
+    - access_token: JWT token for authentication
+    """
     try:
         user_repo = UserRepository(db)
         existing_user = await user_repo.get_user_by_email(request.email)
@@ -182,8 +197,18 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
         logger.error(f"Registration error: {str(e)}")
         return BaseResponse(success=False, error=ErrorResponse(message=str(e)))
 
-@router.post("/login", response_model=BaseResponse[LoginResponse])
+@router.post("/login", response_model=BaseResponse[LoginResponse],
+            summary="User login",
+            description="Authenticate user with email and password")
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Authenticate a user with:
+    - email: Registered email address
+    - password: User's password
+
+    Returns:
+    - access_token: JWT token for authentication
+    """
     try:
         user_repo = UserRepository(db)
         user = await user_repo.get_user_by_email(request.email)
@@ -222,8 +247,17 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         logger.error(f"Login error: {str(e)}")
         return BaseResponse(success=False, error=ErrorResponse(message=str(e)))
 
-@router.get("/me", response_model=BaseResponse[dict])
+@router.get("/me", response_model=BaseResponse[dict],
+           summary="Get current user",
+           description="Get details of currently authenticated user")
 async def get_user_me(current_user=Depends(get_current_user)):
+    """
+    Get current authenticated user's details:
+    - email: User's email
+    - full_name: User's full name
+    - is_active: Account status
+    - role: User role (admin/user)
+    """
     return BaseResponse(
         data={
             "email": current_user.email,

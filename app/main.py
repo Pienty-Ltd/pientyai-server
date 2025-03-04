@@ -22,10 +22,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=f"{project_name} API",
-    description=f"{project_name} API",
+    description=f"{project_name} API Documentation",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    openapi_tags=[
+        {
+            "name": "Authentication",
+            "description": "User authentication and authorization operations"
+        },
+        {
+            "name": "Admin",
+            "description": "Administrative operations"
+        },
+        {
+            "name": "Promo Codes",
+            "description": "Promo code management and usage"
+        },
+        {
+            "name": "Payments",
+            "description": "Payment processing and management"
+        }
+    ]
 )
 
 # CORS middleware configuration
@@ -53,10 +71,10 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
             success=False,
             message="Validation Error",
             error=ErrorResponse(message="Invalid request data",
-                              details=[{
-                                  "loc": err["loc"],
-                                  "msg": err["msg"]
-                              } for err in exc.errors()])
+                                 details=[{
+                                     "loc": err["loc"],
+                                     "msg": err["msg"]
+                                 } for err in exc.errors()])
         ).dict()
     )
 
@@ -70,7 +88,7 @@ async def auth_exception_handler(request: Request, exc: CustomAuthException):
             success=False,
             message="Authentication failed",
             error=ErrorResponse(message=str(exc.detail),
-                              details=[{"msg": str(exc.detail)}])
+                                 details=[{"msg": str(exc.detail)}])
         ).dict(),
         headers=exc.headers
     )
@@ -85,7 +103,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             success=False,
             message="Request failed",
             error=ErrorResponse(message=str(exc.detail),
-                              details=[{"msg": str(exc.detail)}])
+                                 details=[{"msg": str(exc.detail)}])
         ).dict(),
         headers=getattr(exc, 'headers', None)
     )
