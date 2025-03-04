@@ -39,8 +39,15 @@ class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
 oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
-                         db: AsyncSession = Depends(get_db)):
-    """Get current authenticated user"""
+                         db: AsyncSession = Depends(get_db),
+                         require_admin: bool = False):
+    """
+    Get current authenticated user with optional admin requirement
+    :param token: JWT token
+    :param db: Database session
+    :param require_admin: If True, only allows admin users
+    :return: User object
+    """
     try:
         token_data = decode_access_token(token)
         if not token_data or "sub" not in token_data or "fp" not in token_data:
@@ -51,34 +58,55 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # First try to get user from Redis
+        # First try to get user from Redis cache
         cached_user = await get_cached_user_data(token_data["fp"])
+        user = None
+
         if cached_user:
             logger.debug(f"Retrieved user from cache: {cached_user['email']}")
-            return type('User', (), cached_user)  # Create a simple object from dict
+            # Create user object from cached data
+            user = type('User', (), {
+                'email': cached_user['email'],
+                'full_name': cached_user['full_name'],
+                'is_active': cached_user['is_active'],
+                'fp': cached_user['fp'],
+                'role': cached_user['role'],
+                'id': cached_user['id']
+            })
+        else:
+            # If not in cache, get from database
+            user_repo = UserRepository(db)
+            user = await user_repo.get_user_by_fp(token_data["fp"])
+            if not user:
+                logger.warning(f"User not found for token fp: {token_data['fp']}")
+                raise CustomAuthException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"}
+                )
 
-        # If not in cache, try database
-        user_repo = UserRepository(db)
-        user = await user_repo.get_user_by_fp(token_data["fp"])
-        if not user:
-            logger.warning(f"User not found for token fp: {token_data['fp']}")
-            raise CustomAuthException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"}
+            # Cache user data for future requests
+            user_cache_data = {
+                'email': user.email,
+                'full_name': user.full_name,
+                'is_active': user.is_active,
+                'fp': user.fp,
+                'role': user.role.value,
+                'id': user.id
+            }
+            await cache_user_data(user_cache_data)
+
+        # Check admin requirement
+        if require_admin and user.role != UserRole.ADMIN:
+            logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin privileges required"
             )
 
-        # Cache user data for future requests
-        user_cache_data = {
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_active": user.is_active,
-            "fp": user.fp,
-            "role": user.role.value
-        }
-        await cache_user_data(user_cache_data)
         logger.debug(f"Successfully authenticated user: {user.email}")
         return user
+
     except CustomAuthException:
         raise
     except Exception as e:
@@ -88,16 +116,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             detail="Authentication failed",
             headers={"WWW-Authenticate": "Bearer"}
         )
-
-async def get_current_admin_user(current_user = Depends(get_current_user)):
-    """Check if current user is an admin"""
-    if not current_user or current_user.role != UserRole.ADMIN:
-        logger.warning(f"Non-admin user attempted to access admin endpoint: {current_user.email}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
-        )
-    return current_user
 
 @router.post("/register", response_model=BaseResponse[LoginResponse])
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -144,7 +162,8 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "full_name": user.full_name,
             "is_active": user.is_active,
             "fp": user.fp,
-            "role": user.role.value
+            "role": user.role.value,
+            "id": user.id
         }
         await cache_user_data(user_cache_data)
 
@@ -182,7 +201,9 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             "email": user.email,
             "full_name": user.full_name,
             "is_active": user.is_active,
-            "fp": user.fp
+            "fp": user.fp,
+            "role": user.role.value,
+            "id": user.id
         }
         await cache_user_data(user_cache_data)
 
@@ -208,7 +229,8 @@ async def get_user_me(current_user=Depends(get_current_user)):
             "email": current_user.email,
             "full_name": current_user.full_name,
             "is_active": current_user.is_active,
-            "fp": current_user.fp
+            "fp": current_user.fp,
+            "role": getattr(current_user, 'role', UserRole.USER)
         },
         message="User details retrieved successfully"
     )

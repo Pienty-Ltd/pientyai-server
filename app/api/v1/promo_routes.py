@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.database_factory import get_db
 from app.database.repositories.promo_code_repository import PromoCodeRepository
 from app.schemas.base import BaseResponse, ErrorResponse
-from app.api.v1.auth import get_current_user, get_current_admin_user
+from app.api.v1.auth import get_current_user
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ class PromoUsageHistory(BaseModel):
 async def create_promo_code(
     promo: PromoCodeCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_admin_user)  # Only admins can create promo codes
+    current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
     """Create a new promo code"""
     try:

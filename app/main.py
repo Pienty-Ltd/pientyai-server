@@ -63,13 +63,13 @@ async def auth_exception_handler(request: Request, exc: CustomAuthException):
     logger.warning(f"Authentication exception: {exc.detail}")
     return JSONResponse(status_code=exc.status_code,
                         content=BaseResponse(success=False,
-                                             message="Authentication failed",
-                                             error=ErrorResponse(
-                                                 message=str(exc.detail),
-                                                 details=[{
-                                                     "msg":
-                                                     str(exc.detail)
-                                                 }])).dict(),
+                                              message="Authentication failed",
+                                              error=ErrorResponse(
+                                                  message=str(exc.detail),
+                                                  details=[{
+                                                      "msg":
+                                                      str(exc.detail)
+                                                  }])).dict(),
                         headers=exc.headers)
 
 # Handle FastAPI's built-in HTTPException (including 401 Unauthorized)
@@ -78,13 +78,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     logger.warning(f"HTTP exception: {exc.detail}")
     return JSONResponse(status_code=exc.status_code,
                         content=BaseResponse(success=False,
-                                             message="Request failed",
-                                             error=ErrorResponse(
-                                                 message=str(exc.detail),
-                                                 details=[{
-                                                     "msg":
-                                                     str(exc.detail)
-                                                 }])).dict(),
+                                              message="Request failed",
+                                              error=ErrorResponse(
+                                                  message=str(exc.detail),
+                                                  details=[{
+                                                      "msg":
+                                                      str(exc.detail)
+                                                  }])).dict(),
                         headers=getattr(exc, 'headers', None))
 
 # Global exception handler for unhandled exceptions
@@ -115,10 +115,15 @@ async def startup_event():
     try:
         await create_tables()
         logger.info("Database tables created successfully")
+        # Log created tables for verification
+        from app.database.base import Base #Added import for Base
+        tables = Base.metadata.tables.keys()
+        logger.info(f"Created tables: {', '.join(tables)}")
     except Exception as e:
         logger.error(f"Error creating database tables: {str(e)}")
         raise
 
 if __name__ == "__main__":
+    # ALWAYS serve the app on port 8080
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

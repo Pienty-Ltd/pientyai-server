@@ -4,7 +4,7 @@ from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
 from app.database.repositories.promo_code_repository import PromoCodeRepository
 from app.schemas.base import BaseResponse, ErrorResponse
-from app.api.v1.auth import get_current_admin_user
+from app.api.v1.auth import get_current_user
 from app.database.models.db_models import UserRole
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -35,7 +35,7 @@ class PromoCodeStatsResponse(BaseModel):
 async def create_admin_user(
     request: CreateAdminRequest,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_admin_user)
+    current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
     """Create a new admin user (only accessible by existing admins)"""
     try:
@@ -76,13 +76,13 @@ async def create_admin_user(
 @router.get("/promo-codes/stats", response_model=BaseResponse[List[PromoCodeStatsResponse]])
 async def get_promo_code_stats(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_admin_user)
+    current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
     """Get statistics for all promo codes"""
     try:
         repo = PromoCodeRepository(db)
         promo_codes = await repo.list_active_promo_codes()
-        
+
         stats = []
         for code in promo_codes:
             usage_stats = await repo.get_promo_code_stats(code.id)
@@ -108,13 +108,13 @@ async def get_promo_code_stats(
 async def deactivate_promo_code(
     code_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_admin_user)
+    current_user = Depends(lambda: get_current_user(require_admin=True))
 ):
     """Deactivate a promo code"""
     try:
         repo = PromoCodeRepository(db)
         result = await repo.deactivate_promo_code(code_id)
-        
+
         if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
