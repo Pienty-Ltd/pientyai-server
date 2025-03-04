@@ -1,7 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum as SQLEnum, Numeric
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum as SQLEnum, Numeric, ForeignKey
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from app.database.database_factory import Base
 
 class DiscountType(str, Enum):
@@ -18,12 +19,16 @@ class PromoCode(Base):
     discount_type = Column(SQLEnum(DiscountType), nullable=False)
     discount_value = Column(Numeric(10, 2))  # Amount or percentage of discount
     max_uses = Column(Integer, default=1)    # How many times this code can be used
+    max_uses_per_user = Column(Integer, default=1)  # How many times a single user can use this code
     times_used = Column(Integer, default=0)   # How many times this code has been used
     valid_from = Column(DateTime, default=func.now())
     valid_until = Column(DateTime)           # When the code expires
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationship with usage history
+    usage_history = relationship("PromoCodeUsage", back_populates="promo_code")
 
     def is_valid(self) -> bool:
         """Check if the promo code is valid for use"""
@@ -46,3 +51,17 @@ class PromoCode(Base):
             return original_amount * (float(self.discount_value) / 100)
         else:  # FIXED
             return min(float(self.discount_value), original_amount)
+
+class PromoCodeUsage(Base):
+    __tablename__ = "promo_code_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    promo_code_id = Column(Integer, ForeignKey("promo_codes.id"), nullable=False)
+    user_id = Column(Integer, nullable=False, index=True)
+    used_at = Column(DateTime, default=func.now(), nullable=False)
+    amount = Column(Numeric(10, 2))  # Original amount before discount
+    discount_amount = Column(Numeric(10, 2))  # Amount of discount applied
+    usage_metadata = Column(String)  # Additional usage information (renamed from metadata)
+
+    # Relationship with promo code
+    promo_code = relationship("PromoCode", back_populates="usage_history")

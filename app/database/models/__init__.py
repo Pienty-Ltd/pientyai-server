@@ -1,4 +1,3 @@
-from .promo_code import PromoCode, DiscountType
-from .db_models import PaymentHistory, PaymentStatus
+from .promo_code import PromoCode, DiscountType, PromoCodeUsage
 
-__all__ = ['PromoCode', 'DiscountType', 'PaymentHistory', 'PaymentStatus']
+__all__ = ['PromoCode', 'DiscountType', 'PromoCodeUsage']
