@@ -10,6 +10,9 @@ import asyncio
 from app.core.config import config
 from app.database.models.db_models import File, KnowledgeBase, FileStatus
 from app.core.services.openai_service import OpenAIService
+from sqlalchemy import select, desc
+from sqlalchemy.sql.expression import func
+from app.database.database_factory import async_session_maker
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,62 @@ class DocumentService:
             logger.error(f"Error processing document: {str(e)}")
             if db_file:
                 db_file.status = FileStatus.FAILED
+            raise
+
+    async def search_documents(
+        self,
+        organization_id: int,
+        query: str,
+        limit: int = 5
+    ) -> List[KnowledgeBase]:
+        """
+        Search through documents using semantic search with embeddings
+        """
+        try:
+            # Generate embedding for search query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                raise ValueError("Failed to generate embedding for search query")
+
+            async with async_session_maker() as session:
+                # Using pgvector's L2 distance to find similar chunks
+                stmt = select(KnowledgeBase).where(
+                    KnowledgeBase.organization_id == organization_id
+                ).order_by(
+                    func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
+                ).limit(limit)
+
+                result = await session.execute(stmt)
+                chunks = result.scalars().all()
+
+                logger.info(f"Found {len(chunks)} relevant chunks for query: {query}")
+                return chunks
+
+        except Exception as e:
+            logger.error(f"Error searching documents: {str(e)}")
+            raise
+
+    async def get_organization_documents(
+        self,
+        organization_id: int
+    ) -> List[File]:
+        """
+        Get all documents for an organization
+        """
+        try:
+            async with async_session_maker() as session:
+                stmt = select(File).where(
+                    File.organization_id == organization_id
+                ).order_by(desc(File.created_at))
+
+                result = await session.execute(stmt)
+                files = result.scalars().all()
+
+                logger.info(f"Retrieved {len(files)} documents for organization {organization_id}")
+                return files
+
+        except Exception as e:
+            logger.error(f"Error fetching organization documents: {str(e)}")
             raise
 
     async def _extract_text_chunks(

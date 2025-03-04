@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = config.DATABASE_URL
 
 engine = create_async_engine(DATABASE_URL, echo=True)
-SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
+async_session_maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
 Base = declarative_base()
 
 async def create_tables():
@@ -19,7 +19,8 @@ async def create_tables():
             from app.database.models import (
                 User, Organization, UserSubscription,
                 PaymentHistory, PromoCode, PromoCodeUsage,
-                UserRole, PaymentStatus, SubscriptionStatus
+                UserRole, PaymentStatus, SubscriptionStatus,
+                File, KnowledgeBase, FileStatus
             )
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Successfully created database tables")
@@ -32,7 +33,7 @@ async def create_tables():
 
 async def get_db():
     """Get database session"""
-    db = SessionLocal()
+    db = async_session_maker()
     try:
         yield db
     finally:

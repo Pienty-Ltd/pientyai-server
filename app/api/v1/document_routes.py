@@ -1,9 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query
 from typing import List
 import logging
 from app.core.services.document_service import DocumentService
 from app.database.models import User, Organization
-from app.core.security import get_current_user
+from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
 from app.schemas.document import DocumentResponse, KnowledgeBaseResponse
 
@@ -17,9 +17,7 @@ async def upload_document(
     organization_id: int = None,
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Upload and process a document for knowledge base
-    """
+    """Upload and process a document for knowledge base"""
     try:
         # Validate file type
         allowed_types = ["pdf", "docx", "doc"]
@@ -75,9 +73,7 @@ async def get_organization_documents(
     organization_id: int,
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Get all documents for an organization
-    """
+    """Get all documents for an organization"""
     try:
         # Check if user has access to organization
         if not any(org.id == organization_id for org in current_user.organizations):
@@ -86,9 +82,11 @@ async def get_organization_documents(
                 detail="Access denied to organization"
             )
 
-        # TODO: Implement repository pattern and move this logic
-        files = current_user.files.filter(organization_id=organization_id).all()
-        
+        document_service = DocumentService()
+        files = await document_service.get_organization_documents(
+            organization_id=organization_id
+        )
+
         return BaseResponse(
             success=True,
             data=[
@@ -109,4 +107,50 @@ async def get_organization_documents(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error fetching documents"
+        )
+
+@router.get("/search/{organization_id}", response_model=BaseResponse[List[KnowledgeBaseResponse]])
+async def search_documents(
+    organization_id: int,
+    query: str = Query(..., min_length=3),
+    limit: int = Query(default=5, gt=0, le=20),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Search through organization's documents using semantic search
+    """
+    try:
+        # Check if user has access to organization
+        if not any(org.id == organization_id for org in current_user.organizations):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to organization"
+            )
+
+        document_service = DocumentService()
+        results = await document_service.search_documents(
+            organization_id=organization_id,
+            query=query,
+            limit=limit
+        )
+
+        return BaseResponse(
+            success=True,
+            data=[
+                KnowledgeBaseResponse(
+                    id=result.id,
+                    fp=result.fp,
+                    chunk_index=result.chunk_index,
+                    content=result.content,
+                    meta_info=result.meta_info,
+                    created_at=result.created_at
+                ) for result in results
+            ]
+        )
+
+    except Exception as e:
+        logger.error(f"Error searching documents: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error searching documents"
         )
