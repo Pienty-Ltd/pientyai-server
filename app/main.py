@@ -71,10 +71,10 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
             success=False,
             message="Validation Error",
             error=ErrorResponse(message="Invalid request data",
-                                 details=[{
-                                     "loc": err["loc"],
-                                     "msg": err["msg"]
-                                 } for err in exc.errors()])
+                              details=[{
+                                  "loc": err["loc"],
+                                  "msg": err["msg"]
+                              } for err in exc.errors()])
         ).dict()
     )
 
@@ -88,7 +88,7 @@ async def auth_exception_handler(request: Request, exc: CustomAuthException):
             success=False,
             message="Authentication failed",
             error=ErrorResponse(message=str(exc.detail),
-                                 details=[{"msg": str(exc.detail)}])
+                              details=[{"msg": str(exc.detail)}])
         ).dict(),
         headers=exc.headers
     )
@@ -103,7 +103,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             success=False,
             message="Request failed",
             error=ErrorResponse(message=str(exc.detail),
-                                 details=[{"msg": str(exc.detail)}])
+                              details=[{"msg": str(exc.detail)}])
         ).dict(),
         headers=getattr(exc, 'headers', None)
     )
@@ -142,6 +142,6 @@ async def startup_event():
         raise
 
 if __name__ == "__main__":
-    # ALWAYS serve the app on port 8080
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    # Ensure consistency with the port number used in the workflow
+    uvicorn.run(app, host="0.0.0.0", port=8080, reload=True)

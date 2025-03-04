@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/admin",
     tags=["Admin"],
-    responses={404: {"description": "Not found"}},
-    description="Administrative operations and management features"
+    responses={404: {"description": "Not found"}}
 )
 
 class CreateAdminRequest(BaseModel):

@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/auth",
     tags=["Authentication"],
-    responses={404: {"description": "Not found"}},
-    description="Authentication and user management operations"
+    responses={404: {"description": "Not found"}}
 )
 
 class CustomAuthException(HTTPException):

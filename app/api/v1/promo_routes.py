@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/promos",
     tags=["Promo Codes"],
-    responses={404: {"description": "Not found"}},
-    description="Promo code management and validation operations"
+    responses={404: {"description": "Not found"}}
 )
 
 class PromoCodeCreate(BaseModel):
