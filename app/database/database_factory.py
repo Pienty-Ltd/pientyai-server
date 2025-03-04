@@ -15,8 +15,16 @@ async def create_tables():
     """Create all database tables"""
     try:
         async with engine.begin() as conn:
+            # Make sure to import the models here or their tables won't be created
+            from app.database.models import (
+                User, Organization, UserSubscription,
+                PaymentHistory, PromoCode, PromoCodeUsage
+            )
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Successfully created database tables")
+            # Log created tables for verification
+            tables = Base.metadata.tables.keys()
+            logger.info(f"Created tables: {', '.join(tables)}")
     except Exception as e:
         logger.error(f"Error creating database tables: {str(e)}")
         raise

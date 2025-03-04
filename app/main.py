@@ -6,7 +6,8 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
 from app.api.v1.auth import router as auth_router, CustomAuthException
-from app.api.v1.payment_routes import router as payment_router # Added import
+from app.api.v1.payment_routes import router as payment_router
+from app.api.v1.admin_routes import router as admin_router #New import
 from app.core.config import config
 from app.database.database_factory import create_tables
 from app.schemas.base import BaseResponse, ErrorResponse
@@ -37,7 +38,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth_router)
-app.include_router(payment_router) # Added router inclusion
+app.include_router(payment_router)
+app.include_router(admin_router) #New router inclusion
 
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
@@ -49,12 +51,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
                             success=False,
                             message="Validation Error",
                             error=ErrorResponse(message="Invalid request data",
-                                                 details=[{
-                                                     "loc": err["loc"],
-                                                     "msg": err["msg"]
-                                                 } for err in exc.errors()
-                                                          ])).dict())
-
+                                               details=[{
+                                                   "loc": err["loc"],
+                                                   "msg": err["msg"]
+                                               } for err in exc.errors()
+                                                        ])).dict())
 
 # Authentication exception handler
 @app.exception_handler(CustomAuthException)
@@ -71,7 +72,6 @@ async def auth_exception_handler(request: Request, exc: CustomAuthException):
                                                  }])).dict(),
                         headers=exc.headers)
 
-
 # Handle FastAPI's built-in HTTPException (including 401 Unauthorized)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -87,11 +87,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
                                                  }])).dict(),
                         headers=getattr(exc, 'headers', None))
 
-
 # Global exception handler for unhandled exceptions
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {str(exc)}")
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True) #Improved logging
     return JSONResponse(
         status_code=500,
         content=BaseResponse(
@@ -100,12 +99,10 @@ async def global_exception_handler(request: Request, exc: Exception):
             error=ErrorResponse(
                 message="An unexpected error occurred")).dict())
 
-
 # Root endpoint
 @app.get("/")
 async def root():
     return BaseResponse(message=f"Welcome to {project_name} API")
-
 
 # Health check endpoint
 @app.get("/health")

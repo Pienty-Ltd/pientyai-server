@@ -15,6 +15,7 @@ from app.core.security import (get_password_hash, verify_password,
                              create_access_token, decode_access_token,
                              cache_user_data, get_cached_user_data)
 from app.database.repositories.subscription_repository import SubscriptionRepository
+from app.database.models.db_models import UserRole
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth")
@@ -39,6 +40,7 @@ oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
                          db: AsyncSession = Depends(get_db)):
+    """Get current authenticated user"""
     try:
         token_data = decode_access_token(token)
         if not token_data or "sub" not in token_data or "fp" not in token_data:
@@ -71,7 +73,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             "email": user.email,
             "full_name": user.full_name,
             "is_active": user.is_active,
-            "fp": user.fp
+            "fp": user.fp,
+            "role": user.role.value
         }
         await cache_user_data(user_cache_data)
         logger.debug(f"Successfully authenticated user: {user.email}")
@@ -86,8 +89,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             headers={"WWW-Authenticate": "Bearer"}
         )
 
+async def get_current_admin_user(current_user = Depends(get_current_user)):
+    """Check if current user is an admin"""
+    if not current_user or current_user.role != UserRole.ADMIN:
+        logger.warning(f"Non-admin user attempted to access admin endpoint: {current_user.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
+
 @router.post("/register", response_model=BaseResponse[LoginResponse])
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """Register a new user"""
     try:
         user_repo = UserRepository(db)
         existing_user = await user_repo.get_user_by_email(request.email)
@@ -106,7 +120,8 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "email": request.email,
             "hashed_password": hashed_password,
             "full_name": request.full_name,
-            "is_active": True
+            "is_active": True,
+            "role": UserRole.USER  # Default role is USER
         }
 
         # Create user first
@@ -128,7 +143,8 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "email": user.email,
             "full_name": user.full_name,
             "is_active": user.is_active,
-            "fp": user.fp
+            "fp": user.fp,
+            "role": user.role.value
         }
         await cache_user_data(user_cache_data)
 
