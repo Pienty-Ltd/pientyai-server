@@ -15,10 +15,11 @@ async def create_tables():
     """Create all database tables"""
     try:
         async with engine.begin() as conn:
-            # Make sure to import the models here or their tables won't be created
+            # Import all models here to ensure they're registered with SQLAlchemy
             from app.database.models import (
                 User, Organization, UserSubscription,
-                PaymentHistory, PromoCode, PromoCodeUsage
+                PaymentHistory, PromoCode, PromoCodeUsage,
+                UserRole, PaymentStatus, SubscriptionStatus
             )
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Successfully created database tables")
