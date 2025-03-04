@@ -5,7 +5,6 @@ import logging
 # Load .env file
 load_dotenv(override=True)
 
-
 class Config:
     # Environment
     API_PRODUCTION = os.getenv("API_PRODUCTION", "false").lower() == "true"
@@ -24,16 +23,22 @@ class Config:
                              "").replace("postgresql://",
                                          "postgresql+asyncpg://")
 
+    # AWS Configuration
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_REGION = os.getenv("AWS_REGION")
+    AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
+
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
     # Stripe Configuration
     STRIPE_TEST_PUBLIC_KEY = os.getenv("STRIPE_TEST_PUBLIC_KEY")
     STRIPE_TEST_SECRET_KEY = os.getenv("STRIPE_TEST_SECRET_KEY")
     STRIPE_LIVE_PUBLIC_KEY = os.getenv("STRIPE_LIVE_PUBLIC_KEY")
     STRIPE_LIVE_SECRET_KEY = os.getenv("STRIPE_LIVE_SECRET_KEY")
-    STRIPE_WEBHOOK_SECRET = os.getenv(
-        "STRIPE_WEBHOOK_SECRET")  # Added webhook secret
-    STRIPE_PRICE_ID = os.getenv(
-        "STRIPE_PRICE_ID")  # Added subscription price ID
-
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+    STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
 
 config = Config()
 
