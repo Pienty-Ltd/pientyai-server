@@ -1,11 +1,11 @@
 import os
 from typing import List, Optional
 import openai
-from app.core.config import settings
+from app.core.config import config
 
 class OpenAIService:
     def __init__(self):
-        openai.api_key = settings.OPENAI_API_KEY
+        openai.api_key = config.OPENAI_API_KEY
 
     async def create_embeddings(self, text_chunks: List[str]) -> List[List[float]]:
         """

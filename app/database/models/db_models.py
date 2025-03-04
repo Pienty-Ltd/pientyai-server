@@ -109,7 +109,7 @@ class KnowledgeBase(Base):
     chunk_index = Column(Integer, nullable=False)  # Sıra numarası
     content = Column(Text, nullable=False)  # Chunk içeriği
     embedding = Column(Vector(1536), nullable=False)  # OpenAI ada-002 embedding vektörü
-    metadata = Column(String)  # JSON olarak ek bilgiler
+    meta_info = Column(String)  # JSON olarak ek bilgiler (metadata yerine meta_info kullanıyoruz)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

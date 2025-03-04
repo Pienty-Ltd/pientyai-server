@@ -73,7 +73,7 @@ class DocumentService:
                     chunk_index=idx,
                     content=chunk,
                     embedding=embedding,
-                    metadata=json.dumps({
+                    meta_info=json.dumps({  # metadata -> meta_info
                         "filename": filename,
                         "chunk_number": idx + 1,
                         "total_chunks": len(text_chunks)

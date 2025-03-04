@@ -52,3 +52,8 @@ openai
 pgvector
 pypdf2
 python-docx
+boto3
+openai
+pgvector
+pypdf2
+python-docx
