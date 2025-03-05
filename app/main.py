@@ -1,9 +1,11 @@
 import logging
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+import asyncio
+from datetime import datetime, timezone
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.payment_routes import router as payment_router
@@ -11,7 +13,7 @@ from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.document_routes import router as document_router
 from app.api.v1.dashboard_routes import router as dashboard_router
 from app.core.config import config
-from app.database.database_factory import create_tables
+from app.database.database_factory import create_tables, get_db
 from app.schemas.base import BaseResponse, ErrorResponse
 
 project_name = "Pienty.AI"
@@ -57,6 +59,22 @@ app.include_router(payment_router)
 app.include_router(admin_router)
 app.include_router(document_router)
 app.include_router(dashboard_router)
+
+# Background task for updating dashboard stats
+async def update_dashboard_stats_task():
+    while True:
+        try:
+            db = await get_db().__anext__()
+            await db.execute("SELECT update_dashboard_stats()")
+            await db.commit()
+            logger.info("Dashboard statistics updated successfully")
+        except Exception as e:
+            logger.error(f"Error updating dashboard statistics: {str(e)}")
+        finally:
+            if 'db' in locals():
+                await db.close()
+        # Wait for 1 hour before next update
+        await asyncio.sleep(3600)
 
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
@@ -133,8 +151,12 @@ async def startup_event():
     try:
         await create_tables()
         logger.info("Database tables created successfully")
+
+        # Start background task for updating dashboard stats
+        asyncio.create_task(update_dashboard_stats_task())
+        logger.info("Dashboard stats background task started")
     except Exception as e:
-        logger.error(f"Error creating database tables: {str(e)}")
+        logger.error(f"Error during startup: {str(e)}")
         raise
 
 if __name__ == "__main__":
