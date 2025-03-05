@@ -31,7 +31,7 @@ LEFT JOIN files f ON f.organization_id = o.id
 LEFT JOIN knowledge_base kb ON kb.file_id = f.id
 GROUP BY o.id;
 
--- Function to refresh materialized views concurrently
+-- Function to refresh materialized views
 CREATE OR REPLACE FUNCTION refresh_dashboard_stats_views()
 RETURNS void AS $$
 BEGIN
@@ -80,6 +80,7 @@ BEGIN
         batch_counter := batch_counter + 1;
         IF batch_counter >= batch_size THEN
             batch_counter := 0;
+            COMMIT;
         END IF;
     END LOOP;
 
@@ -110,10 +111,69 @@ BEGIN
         batch_counter := batch_counter + 1;
         IF batch_counter >= batch_size THEN
             batch_counter := 0;
+            COMMIT;
         END IF;
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Function to manage cron jobs
+CREATE OR REPLACE FUNCTION manage_dashboard_stats_cron_jobs()
+RETURNS void AS $$
+BEGIN
+    -- Check if pg_cron extension is available
+    IF EXISTS (
+        SELECT 1 
+        FROM pg_extension 
+        WHERE extname = 'pg_cron'
+    ) THEN
+        -- Add refresh_views_hourly job
+        IF NOT EXISTS (
+            SELECT 1 FROM cron.job 
+            WHERE jobname = 'refresh_views_hourly'
+        ) THEN
+            INSERT INTO cron.job (jobname, schedule, command, nodename, nodeport, database, username)
+            VALUES (
+                'refresh_views_hourly',
+                '*/30 * * * *',
+                'SELECT refresh_dashboard_stats_views()',
+                'localhost',
+                5432,
+                current_database(),
+                current_user
+            );
+            RAISE NOTICE 'Created refresh_views_hourly job';
+        END IF;
+
+        -- Add update_stats_hourly job
+        IF NOT EXISTS (
+            SELECT 1 FROM cron.job 
+            WHERE jobname = 'update_stats_hourly'
+        ) THEN
+            INSERT INTO cron.job (jobname, schedule, command, nodename, nodeport, database, username)
+            VALUES (
+                'update_stats_hourly',
+                '0 * * * *',
+                'SELECT update_dashboard_stats(1000)',
+                'localhost',
+                5432,
+                current_database(),
+                current_user
+            );
+            RAISE NOTICE 'Created update_stats_hourly job';
+        END IF;
+
+        RAISE NOTICE 'Dashboard stats cron jobs have been configured successfully';
+    ELSE
+        RAISE WARNING 'pg_cron extension is not available. Cron jobs were not scheduled.';
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'Error managing cron jobs: %', SQLERRM;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Call manage_dashboard_stats_cron_jobs() to setup cron jobs
+SELECT manage_dashboard_stats_cron_jobs();
 
 -- Function to update specific user's statistics 
 CREATE OR REPLACE FUNCTION update_user_stats(p_user_id integer)
@@ -184,44 +244,3 @@ BEGIN
         last_updated = CURRENT_TIMESTAMP;
 END;
 $$ LANGUAGE plpgsql;
-
--- Function to manage cron jobs
-CREATE OR REPLACE FUNCTION manage_dashboard_stats_cron_jobs()
-RETURNS void AS $$
-DECLARE
-    job_exists boolean;
-    job_command text;
-BEGIN
-    -- Check for refresh_views_hourly job
-    SELECT EXISTS (
-        SELECT 1 FROM cron.job WHERE jobname = 'refresh_views_hourly'
-    ) INTO job_exists;
-
-    IF NOT job_exists THEN
-        job_command := 'SELECT refresh_dashboard_stats_views()';
-        PERFORM cron.schedule('refresh_views_hourly', '*/30 * * * *', job_command);
-        RAISE NOTICE 'Created refresh_views_hourly job';
-    END IF;
-
-    -- Check for update_stats_hourly job
-    SELECT EXISTS (
-        SELECT 1 FROM cron.job WHERE jobname = 'update_stats_hourly'
-    ) INTO job_exists;
-
-    IF NOT job_exists THEN
-        job_command := 'SELECT update_dashboard_stats(1000)';
-        PERFORM cron.schedule('update_stats_hourly', '0 * * * *', job_command);
-        RAISE NOTICE 'Created update_stats_hourly job';
-    END IF;
-
-    -- Verify jobs are running
-    PERFORM cron.schedule_test('refresh_views_hourly');
-    PERFORM cron.schedule_test('update_stats_hourly');
-
-EXCEPTION WHEN OTHERS THEN
-    RAISE WARNING 'Error managing cron jobs: %', SQLERRM;
-END;
-$$ LANGUAGE plpgsql;
-
--- Call manage_dashboard_stats_cron_jobs() to setup cron jobs
-SELECT manage_dashboard_stats_cron_jobs();
