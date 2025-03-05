@@ -18,24 +18,6 @@ class UserRole(str, enum.Enum):
     ADMIN = "admin"
     USER = "user"
 
-class SubscriptionStatus(enum.Enum):
-    TRIAL = "trial"
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    CANCELED = "canceled"
-
-class PaymentStatus(enum.Enum):
-    PENDING = "pending"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    REFUNDED = "refunded"
-
-class FileStatus(str, enum.Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
 class User(Base):
     __tablename__ = "users"
 
@@ -47,6 +29,7 @@ class User(Base):
     full_name = Column(String)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.USER)
     is_active = Column(Boolean, default=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)  # Added last_login field
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -65,8 +48,6 @@ class Organization(Base):
     __tablename__ = "organizations"
 
     id = Column(Integer, primary_key=True, index=True)
-    fp = Column(String, unique=True, index=True, nullable=False,
-                default=lambda: f"org_{create_random_key()}")
     name = Column(String, nullable=False)
     description = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -176,3 +157,21 @@ class DashboardStats(Base):
 
 User.dashboard_stats = relationship("DashboardStats", back_populates="user")
 Organization.dashboard_stats = relationship("DashboardStats", back_populates="organization")
+
+class SubscriptionStatus(enum.Enum):
+    TRIAL = "trial"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+class PaymentStatus(enum.Enum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+class FileStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"

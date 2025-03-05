@@ -8,15 +8,15 @@ class OrganizationRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_organization_by_fp(self, org_fp: str):
+    async def get_organization_by_id(self, org_id: int):
         result = await self.db.execute(
-            select(Organization).filter(Organization.fp == org_fp))
+            select(Organization).filter(Organization.id == org_id))
         return result.scalar_one_or_none()
 
-    async def get_organizations_by_user(self, user_fp: str):
+    async def get_organizations_by_user(self, user_id: int):
         result = await self.db.execute(
             select(Organization).join(
-                Organization.users).filter(User.fp == user_fp))
+                Organization.users).filter(User.id == user_id))
         return result.scalars().all()
 
     async def create_organization(self, org_data: dict):

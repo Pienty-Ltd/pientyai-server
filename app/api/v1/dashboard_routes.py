@@ -52,35 +52,56 @@ async def get_dashboard_data(
     - Last login timestamp
     """
     try:
+        logger.info(f"Fetching dashboard data for user: {current_user.email}, fp: {current_user.fp}")
         org_repo = OrganizationRepository(db)
         stats_repo = DashboardStatsRepository(db)
 
         # Get user's organizations
-        organizations = await org_repo.get_organizations_by_user(current_user.fp)
+        try:
+            organizations = await org_repo.get_organizations_by_user(current_user.id)  # Change from fp to id
+            logger.info(f"Found {len(organizations)} organizations for user")
+        except Exception as e:
+            logger.error(f"Error fetching organizations: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch organizations"
+            )
 
         # Get user statistics
-        user_stats = await stats_repo.get_user_stats(current_user.id)
+        try:
+            user_stats = await stats_repo.get_user_stats(current_user.id)
+            logger.info(f"User stats retrieved: {user_stats}")
+        except Exception as e:
+            logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch user statistics"
+            )
 
         # Prepare organization info list with stats
         org_info_list = []
         current_org = None
 
         for org in organizations:
-            org_stats = await stats_repo.get_organization_stats(org.id)
-            org_info = OrganizationInfo(
-                id=org.id,
-                name=org.name,
-                created_at=org.created_at,
-                total_knowledge_base_count=org_stats.total_knowledge_base_count if org_stats else 0,
-                total_file_count=org_stats.total_file_count if org_stats else 0,
-                total_storage_used=org_stats.total_storage_used if org_stats else 0,
-                last_activity_date=org_stats.last_activity_date if org_stats else None
-            )
-            org_info_list.append(org_info)
+            try:
+                org_stats = await stats_repo.get_organization_stats(org.id)
+                org_info = OrganizationInfo(
+                    id=org.id,
+                    name=org.name,
+                    created_at=org.created_at,
+                    total_knowledge_base_count=org_stats.total_knowledge_base_count if org_stats else 0,
+                    total_file_count=org_stats.total_file_count if org_stats else 0,
+                    total_storage_used=org_stats.total_storage_used if org_stats else 0,
+                    last_activity_date=org_stats.last_activity_date if org_stats else None
+                )
+                org_info_list.append(org_info)
 
-            # If this is the requested organization, set it as current
-            if organization_id and org.id == organization_id:
-                current_org = org_info
+                # If this is the requested organization, set it as current
+                if organization_id and org.id == organization_id:
+                    current_org = org_info
+            except Exception as e:
+                logger.error(f"Error processing organization {org.id}: {str(e)}", exc_info=True)
+                continue
 
         # If organization_id is provided but not found in user's organizations
         if organization_id and not current_org:
@@ -108,7 +129,7 @@ async def get_dashboard_data(
             last_login=current_user.last_login
         )
 
-        logger.info(f"Dashboard data retrieved for user: {current_user.email}")
+        logger.info(f"Dashboard data retrieved successfully for user: {current_user.email}")
         return BaseResponse(
             success=True,
             data=dashboard_data
