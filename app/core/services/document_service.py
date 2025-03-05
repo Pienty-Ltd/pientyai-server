@@ -30,52 +30,100 @@ class DocumentService:
         self.bucket_name = config.AWS_BUCKET_NAME
         self.openai_service = OpenAIService()
 
-    async def process_document(
+    async def create_file_record(
         self,
-        file: BinaryIO,
         filename: str,
         file_type: str,
         user_id: int,
         organization_id: int
-    ) -> Tuple[File, List[KnowledgeBase]]:
-        """
-        Process uploaded document: upload to S3, extract text, create embeddings
-        Implements chunking and batch processing for better performance
-        """
-        # Initialize file record
-        db_file = File(
-            filename=filename,
-            file_type=file_type.lower(),
-            status=FileStatus.PROCESSING,
-            user_id=user_id,
-            organization_id=organization_id,
-            s3_key=f"documents/{organization_id}/{filename}"
-        )
+    ) -> File:
+        """Create initial file record with PROCESSING status"""
+        try:
+            db_file = File(
+                filename=filename,
+                file_type=file_type.lower(),
+                status=FileStatus.PROCESSING,
+                user_id=user_id,
+                organization_id=organization_id,
+                s3_key=f"documents/{organization_id}/{filename}"
+            )
 
-        knowledge_base_entries = []
+            async with async_session_maker() as session:
+                session.add(db_file)
+                await session.commit()
+                await session.refresh(db_file)
+                return db_file
 
+        except Exception as e:
+            logger.error(f"Error creating file record: {str(e)}")
+            raise
+
+    async def update_file_status(
+        self,
+        file_id: int,
+        status: FileStatus
+    ) -> None:
+        """Update file status"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(File).where(File.id == file_id)
+                result = await session.execute(stmt)
+                db_file = result.scalar_one_or_none()
+
+                if db_file:
+                    db_file.status = status
+                    await session.commit()
+                    logger.info(f"Updated file {file_id} status to {status}")
+                else:
+                    logger.error(f"File {file_id} not found")
+
+        except Exception as e:
+            logger.error(f"Error updating file status: {str(e)}")
+            raise
+
+    async def process_document_async(
+        self,
+        file_content: bytes,
+        filename: str,
+        file_type: str,
+        user_id: int,
+        organization_id: int,
+        db_file_id: int
+    ) -> None:
+        """
+        Process uploaded document asynchronously:
+        - Upload to S3
+        - Extract text
+        - Generate embeddings
+        - Save to knowledge base
+        """
         try:
             # Upload to S3
             try:
+                from io import BytesIO
+                file_obj = BytesIO(file_content)
+                s3_key = f"documents/{organization_id}/{filename}"
+
                 self.s3_client.upload_fileobj(
-                    file,
+                    file_obj,
                     self.bucket_name,
-                    db_file.s3_key
+                    s3_key
                 )
-                logger.info(f"File uploaded to S3: {db_file.s3_key}")
-            except ClientError as e:
+                logger.info(f"File uploaded to S3: {s3_key}")
+            except Exception as e:
                 logger.error(f"Error uploading file to S3: {str(e)}")
-                db_file.status = FileStatus.FAILED
+                await self.update_file_status(db_file_id, FileStatus.FAILED)
                 raise
 
             # Extract text content and split into chunks
-            text_chunks = await self._extract_text_chunks(file, file_type)
+            text_chunks = await self._extract_text_chunks(BytesIO(file_content), file_type)
             logger.info(f"Extracted {len(text_chunks)} chunks from document")
 
             # Process chunks in batches
             chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
                            for i in range(0, len(text_chunks), self.BATCH_SIZE)]
 
+            knowledge_base_entries = []
             async with async_session_maker() as session:
                 for batch_idx, chunk_batch in enumerate(chunk_batches):
                     try:
@@ -96,7 +144,7 @@ class DocumentService:
                                     "chunk_number": start_idx + idx + 1,
                                     "total_chunks": len(text_chunks)
                                 }),
-                                file_id=db_file.id,
+                                file_id=db_file_id,
                                 organization_id=organization_id
                             )
                             batch_entries.append(kb_entry)
@@ -112,13 +160,13 @@ class DocumentService:
                         # Continue with next batch despite errors
                         continue
 
-            db_file.status = FileStatus.COMPLETED
-            return db_file, knowledge_base_entries
+            # Update file status to completed
+            await self.update_file_status(db_file_id, FileStatus.COMPLETED)
+            logger.info(f"Completed processing document {filename}")
 
         except Exception as e:
-            logger.error(f"Error processing document: {str(e)}")
-            if db_file:
-                db_file.status = FileStatus.FAILED
+            logger.error(f"Error in async document processing: {str(e)}")
+            await self.update_file_status(db_file_id, FileStatus.FAILED)
             raise
 
     async def _extract_text_chunks(

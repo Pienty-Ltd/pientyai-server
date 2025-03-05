@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query, BackgroundTasks
 from typing import List
 import logging
 from app.core.services.document_service import DocumentService
@@ -6,13 +6,40 @@ from app.database.models import User, Organization
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
 from app.schemas.document import DocumentResponse, KnowledgeBaseResponse
+from app.database.models.db_models import FileStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
+async def process_document_background(
+    file_content: bytes,
+    filename: str,
+    file_type: str,
+    user_id: int,
+    organization_id: int,
+    db_file_id: int
+):
+    """Background task for processing document after upload"""
+    try:
+        document_service = DocumentService()
+        await document_service.process_document_async(
+            file_content=file_content,
+            filename=filename,
+            file_type=file_type,
+            user_id=user_id,
+            organization_id=organization_id,
+            db_file_id=db_file_id
+        )
+    except Exception as e:
+        logger.error(f"Background document processing failed: {str(e)}")
+        # Update file status to failed in case of error
+        document_service = DocumentService()
+        await document_service.update_file_status(db_file_id, FileStatus.FAILED)
+
 @router.post("/upload", response_model=BaseResponse[DocumentResponse])
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     organization_id: int = None,
     current_user: User = Depends(get_current_user)
@@ -37,19 +64,32 @@ async def upload_document(
                 )
             organization_id = current_user.organizations[0].id
 
-        # Process document
+        # Read file content
+        file_content = await file.read()
+
+        # Create initial file record with PROCESSING status
         document_service = DocumentService()
-        db_file, knowledge_base_entries = await document_service.process_document(
-            file=file.file,
+        db_file = await document_service.create_file_record(
             filename=file.filename,
             file_type=file_type,
             user_id=current_user.id,
             organization_id=organization_id
         )
 
+        # Schedule background processing
+        background_tasks.add_task(
+            process_document_background,
+            file_content=file_content,
+            filename=file.filename,
+            file_type=file_type,
+            user_id=current_user.id,
+            organization_id=organization_id,
+            db_file_id=db_file.id
+        )
+
         return BaseResponse(
             success=True,
-            message="Document uploaded and processed successfully",
+            message="Document upload started. Processing in background.",
             data=DocumentResponse(
                 id=db_file.id,
                 fp=db_file.fp,
@@ -57,15 +97,15 @@ async def upload_document(
                 file_type=db_file.file_type,
                 status=db_file.status,
                 created_at=db_file.created_at,
-                chunks_count=len(knowledge_base_entries)
+                chunks_count=0  # Will be updated during processing
             )
         )
 
     except Exception as e:
-        logger.error(f"Error processing document: {str(e)}")
+        logger.error(f"Error uploading document: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing document"
+            detail="Error uploading document"
         )
 
 @router.get("/{organization_id}", response_model=BaseResponse[List[DocumentResponse]])

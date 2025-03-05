@@ -57,3 +57,6 @@ openai
 pgvector
 pypdf2
 python-docx
+PyPDF2
+python-docx
+python-multipart
