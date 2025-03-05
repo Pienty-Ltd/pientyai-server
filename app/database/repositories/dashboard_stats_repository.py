@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any
 import logging
 from datetime import datetime, timedelta
 import asyncio
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -39,32 +40,50 @@ class DashboardStatsRepository:
     async def get_user_stats(self, user_id: int) -> Optional[DashboardStats]:
         """Get dashboard statistics for a specific user with caching"""
         try:
+            logger.info(f"Fetching stats for user_id: {user_id}")
             cache_key = f"user_stats_{user_id}"
+
+            # Try cache first
             cached_stats = await self._get_from_cache(cache_key)
             if cached_stats:
+                logger.info(f"Returning cached stats for user_id: {user_id}")
                 return cached_stats
 
-            logger.info(f"Fetching stats for user_id: {user_id}")
+            logger.debug("Cache miss, querying database...")
 
             # Try to get stats from materialized view first
-            result = await self.db.execute(text("""
-                SELECT * FROM mv_user_stats WHERE user_id = :user_id
-            """), {"user_id": user_id})
-            row = result.fetchone()
+            try:
+                logger.debug("Querying materialized view...")
+                result = await self.db.execute(text("""
+                    SELECT * FROM mv_user_stats WHERE user_id = :user_id
+                """), {"user_id": user_id})
+                row = result.fetchone()
+                logger.debug(f"Materialized view query result: {row}")
+            except Exception as e:
+                logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
+                row = None
 
             if not row:
-                # If not in materialized view, update stats for this user
-                await self.db.execute(text("""
-                    SELECT update_user_stats(:user_id)
-                """), {"user_id": user_id})
-                await self.db.commit()
+                logger.info("No data in materialized view, updating stats...")
+                try:
+                    # Update stats for this user
+                    await self.db.execute(text("""
+                        SELECT update_user_stats(:user_id)
+                    """), {"user_id": user_id})
+                    await self.db.commit()
+                    logger.debug("Successfully updated user stats")
 
-                # Get updated stats
-                result = await self.db.execute(
-                    select(DashboardStats).filter(DashboardStats.user_id == user_id)
-                )
-                stats = result.scalar_one_or_none()
+                    # Get updated stats
+                    result = await self.db.execute(
+                        select(DashboardStats).filter(DashboardStats.user_id == user_id)
+                    )
+                    stats = result.scalar_one_or_none()
+                    logger.debug(f"Direct query result: {stats}")
+                except Exception as e:
+                    logger.error(f"Error updating user stats: {str(e)}\n{traceback.format_exc()}")
+                    return None
             else:
+                logger.debug("Converting materialized view row to DashboardStats")
                 # Convert materialized view row to DashboardStats
                 stats = DashboardStats(
                     user_id=row.user_id,
@@ -83,38 +102,56 @@ class DashboardStatsRepository:
             return stats
 
         except Exception as e:
-            logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
+            logger.error(f"Error in get_user_stats: {str(e)}\n{traceback.format_exc()}")
             return None
 
     async def get_organization_stats(self, organization_id: int) -> Optional[DashboardStats]:
         """Get dashboard statistics for a specific organization with caching"""
         try:
+            logger.info(f"Fetching stats for organization_id: {organization_id}")
             cache_key = f"org_stats_{organization_id}"
+
+            # Try cache first
             cached_stats = await self._get_from_cache(cache_key)
             if cached_stats:
+                logger.info(f"Returning cached stats for organization_id: {organization_id}")
                 return cached_stats
 
-            logger.info(f"Fetching stats for organization_id: {organization_id}")
+            logger.debug("Cache miss, querying database...")
 
             # Try to get stats from materialized view first
-            result = await self.db.execute(text("""
-                SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
-            """), {"organization_id": organization_id})
-            row = result.fetchone()
+            try:
+                logger.debug("Querying materialized view...")
+                result = await self.db.execute(text("""
+                    SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
+                """), {"organization_id": organization_id})
+                row = result.fetchone()
+                logger.debug(f"Materialized view query result: {row}")
+            except Exception as e:
+                logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
+                row = None
 
             if not row:
-                # If not in materialized view, update stats for this organization
-                await self.db.execute(text("""
-                    SELECT update_organization_stats(:organization_id)
-                """), {"organization_id": organization_id})
-                await self.db.commit()
+                logger.info("No data in materialized view, updating stats...")
+                try:
+                    # Update stats for this organization
+                    await self.db.execute(text("""
+                        SELECT update_organization_stats(:organization_id)
+                    """), {"organization_id": organization_id})
+                    await self.db.commit()
+                    logger.debug("Successfully updated organization stats")
 
-                # Get updated stats
-                result = await self.db.execute(
-                    select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
-                )
-                stats = result.scalar_one_or_none()
+                    # Get updated stats
+                    result = await self.db.execute(
+                        select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
+                    )
+                    stats = result.scalar_one_or_none()
+                    logger.debug(f"Direct query result: {stats}")
+                except Exception as e:
+                    logger.error(f"Error updating organization stats: {str(e)}\n{traceback.format_exc()}")
+                    return None
             else:
+                logger.debug("Converting materialized view row to DashboardStats")
                 # Convert materialized view row to DashboardStats
                 stats = DashboardStats(
                     organization_id=row.organization_id,
@@ -133,30 +170,42 @@ class DashboardStatsRepository:
             return stats
 
         except Exception as e:
-            logger.error(f"Error fetching organization stats: {str(e)}", exc_info=True)
+            logger.error(f"Error in get_organization_stats: {str(e)}\n{traceback.format_exc()}")
             return None
 
     async def update_stats(self, batch_size: int = 1000) -> None:
         """Update all dashboard statistics using materialized views and batching"""
         try:
+            logger.info("Starting dashboard stats update...")
             # First refresh materialized views
-            await self.db.execute(text("SELECT refresh_dashboard_stats_views()"))
+            try:
+                await self.db.execute(text("""
+                    REFRESH MATERIALIZED VIEW mv_user_stats;
+                    REFRESH MATERIALIZED VIEW mv_organization_stats;
+                """))
+                logger.info("Successfully refreshed materialized views")
+            except Exception as e:
+                logger.error(f"Error refreshing materialized views: {str(e)}\n{traceback.format_exc()}")
+                raise
 
             # Then update dashboard_stats table using the updated views
-            await self.db.execute(text("""
-                SELECT update_dashboard_stats(:batch_size)
-            """), {"batch_size": batch_size})
-
-            await self.db.commit()
-            logger.info(f"Successfully updated dashboard statistics with batch size {batch_size}")
+            try:
+                await self.db.execute(text("""
+                    SELECT update_dashboard_stats(:batch_size)
+                """), {"batch_size": batch_size})
+                await self.db.commit()
+                logger.info(f"Successfully updated dashboard statistics with batch size {batch_size}")
+            except Exception as e:
+                logger.error(f"Error updating dashboard stats: {str(e)}\n{traceback.format_exc()}")
+                raise
 
             # Clear cache after update
             async with self._cache_lock:
                 self._cache.clear()
-            logger.info("Cache cleared after statistics update")
+                logger.info("Cache cleared after statistics update")
 
         except Exception as e:
-            logger.error(f"Error updating dashboard statistics: {str(e)}", exc_info=True)
+            logger.error(f"Error in update_stats: {str(e)}\n{traceback.format_exc()}")
             await self.db.rollback()
             raise
 

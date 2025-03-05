@@ -16,6 +16,7 @@ from app.core.security import (get_password_hash, verify_password,
                              cache_user_data, get_cached_user_data)
 from app.database.repositories.subscription_repository import SubscriptionRepository
 from app.database.models.db_models import UserRole
+from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # Try to get user from cache first
-        cached_user = await get_cached_user_data(token_data["fp"])
-        if cached_user:
-            logger.debug(f"Retrieved user from cache: {cached_user['email']}")
-            return type('User', (), cached_user)
-
-        # If not in cache, get from database
+        # Always get user from database to ensure we have a proper SQLAlchemy instance
         user_repo = UserRepository(db)
         user = await user_repo.get_user_by_fp(token_data["fp"])
         if not user:
@@ -57,16 +52,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # Cache user data
+        # Update last_login time
+        user.last_login = func.now()
+        await db.commit()
+        await db.refresh(user)
+
+        # Cache user data for future reference
         user_cache_data = {
             'email': user.email,
             'full_name': user.full_name,
             'is_active': user.is_active,
             'fp': user.fp,
-            'role': user.role.value,
+            'role': user.role.value if user.role else UserRole.USER.value,
             'id': user.id
         }
         await cache_user_data(user_cache_data)
+
         return user
 
     except Exception as e:
