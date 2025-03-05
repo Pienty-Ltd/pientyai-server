@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
 from app.database.repositories.promo_code_repository import PromoCodeRepository
+from app.database.repositories.dashboard_stats_repository import DashboardStatsRepository
 from app.schemas.base import BaseResponse, ErrorResponse
 from app.api.v1.auth import admin_required
 from app.database.models.db_models import UserRole
@@ -161,4 +162,40 @@ async def deactivate_promo_code(
         return BaseResponse(
             success=False,
             error=ErrorResponse(message="Failed to deactivate promo code")
+        )
+
+class UpdateStatsRequest(BaseModel):
+    batch_size: Optional[int] = 1000
+
+@router.post("/dashboard/update-stats", 
+            response_model=BaseResponse,
+            summary="Update dashboard statistics",
+            description="Manually trigger dashboard statistics update. This operation might take some time depending on the data size.")
+async def update_dashboard_stats(
+    request: UpdateStatsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(admin_required)
+):
+    """
+    Manually trigger a dashboard statistics update:
+    - Refreshes materialized views
+    - Updates dashboard statistics
+    - Uses batch processing to handle large datasets
+
+    Note: This operation might take some time for large datasets
+    """
+    try:
+        stats_repo = DashboardStatsRepository(db)
+        await stats_repo.update_stats(batch_size=request.batch_size)
+
+        logger.info(f"Dashboard stats updated manually by admin {current_user.email}")
+        return BaseResponse(
+            success=True,
+            message="Dashboard statistics updated successfully"
+        )
+    except Exception as e:
+        logger.error(f"Error updating dashboard stats: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message="Failed to update dashboard statistics")
         )

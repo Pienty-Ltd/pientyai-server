@@ -33,24 +33,36 @@ GROUP BY o.id;
 
 -- Function to refresh materialized views concurrently if it doesn't exist
 DO $$ 
+DECLARE
+    func_exists boolean;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'refresh_dashboard_stats_views') THEN
-        CREATE OR REPLACE FUNCTION refresh_dashboard_stats_views()
-        RETURNS void AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'refresh_dashboard_stats_views'
+    ) INTO func_exists;
+
+    IF NOT func_exists THEN
+        EXECUTE 'CREATE FUNCTION refresh_dashboard_stats_views()
+        RETURNS void AS $func$
         BEGIN
             REFRESH MATERIALIZED VIEW CONCURRENTLY mv_user_stats;
             REFRESH MATERIALIZED VIEW CONCURRENTLY mv_organization_stats;
         END;
-        $$ LANGUAGE plpgsql;
+        $func$ LANGUAGE plpgsql;';
     END IF;
 END $$;
 
 -- Function to update dashboard statistics using materialized views if it doesn't exist
 DO $$ 
+DECLARE
+    func_exists boolean;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_dashboard_stats') THEN
-        CREATE OR REPLACE FUNCTION update_dashboard_stats(batch_size integer DEFAULT 1000)
-        RETURNS void AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'update_dashboard_stats'
+    ) INTO func_exists;
+
+    IF NOT func_exists THEN
+        EXECUTE 'CREATE FUNCTION update_dashboard_stats(batch_size integer DEFAULT 1000)
+        RETURNS void AS $func$
         DECLARE
             user_cursor CURSOR FOR 
                 SELECT user_id, total_knowledge_base_count, total_file_count, 
@@ -121,15 +133,20 @@ BEGIN
                 END IF;
             END LOOP;
         END;
-        $$ LANGUAGE plpgsql;
+        $func$ LANGUAGE plpgsql;';
     END IF;
 END $$;
 
 -- Function to update specific user's statistics if it doesn't exist
 DO $$ 
+DECLARE
+    func_exists boolean;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_user_stats') THEN
-        CREATE OR REPLACE FUNCTION update_user_stats(p_user_id integer)
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'update_user_stats'
+    ) INTO func_exists;
+    IF NOT func_exists THEN
+        EXECUTE 'CREATE OR REPLACE FUNCTION update_user_stats(p_user_id integer)
         RETURNS void AS $$
         BEGIN
             WITH user_stats AS (
@@ -161,15 +178,20 @@ BEGIN
                 last_activity_date = EXCLUDED.last_activity_date,
                 last_updated = CURRENT_TIMESTAMP;
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql;';
     END IF;
 END $$;
 
 -- Function to update specific organization's statistics if it doesn't exist
 DO $$ 
+DECLARE
+    func_exists boolean;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_organization_stats') THEN
-        CREATE OR REPLACE FUNCTION update_organization_stats(p_organization_id integer)
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'update_organization_stats'
+    ) INTO func_exists;
+    IF NOT func_exists THEN
+        EXECUTE 'CREATE OR REPLACE FUNCTION update_organization_stats(p_organization_id integer)
         RETURNS void AS $$
         BEGIN
             WITH org_stats AS (
@@ -201,20 +223,6 @@ BEGIN
                 last_activity_date = EXCLUDED.last_activity_date,
                 last_updated = CURRENT_TIMESTAMP;
         END;
-        $$ LANGUAGE plpgsql;
-    END IF;
-END $$;
-
--- Create cron jobs if they don't exist
-DO $$ 
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'refresh_views_hourly') THEN
-        PERFORM cron.schedule('refresh_views_hourly', '30 * * * *', 
-            $$SELECT refresh_dashboard_stats_views()$$);
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'update_stats_hourly') THEN
-        PERFORM cron.schedule('update_stats_hourly', '0 * * * *', 
-            $$SELECT update_dashboard_stats(1000)$$);
+        $$ LANGUAGE plpgsql;';
     END IF;
 END $$;

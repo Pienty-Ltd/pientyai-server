@@ -182,8 +182,7 @@ class DashboardStatsRepository:
             try:
                 async with self.db.begin() as transaction:
                     await transaction.execute(text("""
-                        REFRESH MATERIALIZED VIEW mv_user_stats;
-                        REFRESH MATERIALIZED VIEW mv_organization_stats;
+                        SELECT refresh_dashboard_stats_views()
                     """))
                 logger.info("Successfully refreshed materialized views")
             except Exception as e:

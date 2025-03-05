@@ -1,10 +1,9 @@
 import logging
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
-import asyncio
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 
@@ -61,42 +60,6 @@ app.include_router(admin_router)
 app.include_router(document_router)
 app.include_router(dashboard_router)
 
-# Background task for updating dashboard stats
-async def update_dashboard_stats_task():
-    """Background task to periodically update dashboard statistics using optimized functions"""
-    STATS_UPDATE_INTERVAL = 3600  # 1 hour
-    VIEWS_REFRESH_INTERVAL = 1800  # 30 minutes
-    BATCH_SIZE = 1000
-
-    while True:
-        try:
-            db = await get_db().__anext__()
-            current_time = datetime.now(timezone.utc)
-
-            # Refresh materialized views every 30 minutes
-            await db.execute(text("SELECT refresh_dashboard_stats_views()"))
-            logger.info("Materialized views refreshed successfully")
-
-            # Update dashboard stats with batch processing
-            await db.execute(text("""
-                SELECT update_dashboard_stats(:batch_size)
-            """), {"batch_size": BATCH_SIZE})
-
-            await db.commit()
-            logger.info("Dashboard statistics updated successfully")
-
-            # Calculate next update time
-            next_update = current_time + timedelta(seconds=STATS_UPDATE_INTERVAL)
-            logger.info(f"Next dashboard stats update scheduled for: {next_update}")
-
-        except Exception as e:
-            logger.error(f"Error updating dashboard statistics: {str(e)}", exc_info=True)
-        finally:
-            if 'db' in locals():
-                await db.close()
-
-        # Wait for the next update interval
-        await asyncio.sleep(VIEWS_REFRESH_INTERVAL)
 
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
@@ -173,10 +136,6 @@ async def startup_event():
     try:
         await create_tables()
         logger.info("Database tables created successfully")
-
-        # Start background task for updating dashboard stats
-        asyncio.create_task(update_dashboard_stats_task())
-        logger.info("Dashboard stats background task started")
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
         raise
