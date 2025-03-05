@@ -177,12 +177,14 @@ class DashboardStatsRepository:
         """Update all dashboard statistics using materialized views and batching"""
         try:
             logger.info("Starting dashboard stats update...")
+
             # First refresh materialized views
             try:
-                await self.db.execute(text("""
-                    REFRESH MATERIALIZED VIEW mv_user_stats;
-                    REFRESH MATERIALIZED VIEW mv_organization_stats;
-                """))
+                async with self.db.begin() as transaction:
+                    await transaction.execute(text("""
+                        REFRESH MATERIALIZED VIEW mv_user_stats;
+                        REFRESH MATERIALIZED VIEW mv_organization_stats;
+                    """))
                 logger.info("Successfully refreshed materialized views")
             except Exception as e:
                 logger.error(f"Error refreshing materialized views: {str(e)}\n{traceback.format_exc()}")
@@ -190,10 +192,10 @@ class DashboardStatsRepository:
 
             # Then update dashboard_stats table using the updated views
             try:
-                await self.db.execute(text("""
-                    SELECT update_dashboard_stats(:batch_size)
-                """), {"batch_size": batch_size})
-                await self.db.commit()
+                async with self.db.begin() as transaction:
+                    await transaction.execute(text("""
+                        SELECT update_dashboard_stats(:batch_size)
+                    """), {"batch_size": batch_size})
                 logger.info(f"Successfully updated dashboard statistics with batch size {batch_size}")
             except Exception as e:
                 logger.error(f"Error updating dashboard stats: {str(e)}\n{traceback.format_exc()}")
@@ -206,7 +208,6 @@ class DashboardStatsRepository:
 
         except Exception as e:
             logger.error(f"Error in update_stats: {str(e)}\n{traceback.format_exc()}")
-            await self.db.rollback()
             raise
 
     async def invalidate_cache(self, user_id: Optional[int] = None, organization_id: Optional[int] = None) -> None:
