@@ -9,6 +9,7 @@ from app.api.v1.auth import router as auth_router, CustomAuthException
 from app.api.v1.payment_routes import router as payment_router
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.document_routes import router as document_router
+from app.api.v1.dashboard_routes import router as dashboard_router
 from app.core.config import config
 from app.database.database_factory import create_tables
 from app.schemas.base import BaseResponse, ErrorResponse
@@ -59,7 +60,7 @@ app.include_router(auth_router)
 app.include_router(payment_router)
 app.include_router(admin_router)
 app.include_router(document_router)
-
+app.include_router(dashboard_router)
 
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)

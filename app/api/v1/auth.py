@@ -18,160 +18,98 @@ from app.database.repositories.subscription_repository import SubscriptionReposi
 from app.database.models.db_models import UserRole
 
 logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/api/v1/auth",
     tags=["Authentication"],
     responses={404: {"description": "Not found"}}
 )
 
-class CustomAuthException(HTTPException):
-    """Custom authentication exception that will be handled by the auth exception handler"""
-    pass
-
-class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
-    async def __call__(self, request: Request) -> Optional[str]:
-        try:
-            return await super().__call__(request)
-        except HTTPException as exc:
-            logger.warning(f"OAuth2 authentication failed: {exc.detail}")
-            raise CustomAuthException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-
-oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
                          db: AsyncSession = Depends(get_db)):
-    """
-    Get current authenticated user
-    :param token: JWT token
-    :param db: Database session
-    :return: User object
-    """
+    """Get current authenticated user"""
     try:
         token_data = decode_access_token(token)
         if not token_data or "sub" not in token_data or "fp" not in token_data:
             logger.warning("Invalid token data during authentication")
-            raise CustomAuthException(
+            raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # First try to get user from Redis cache
+        # Try to get user from cache first
         cached_user = await get_cached_user_data(token_data["fp"])
-        user = None
-
         if cached_user:
             logger.debug(f"Retrieved user from cache: {cached_user['email']}")
-            # Create user object from cached data
-            user = type('User', (), {
-                'email': cached_user['email'],
-                'full_name': cached_user['full_name'],
-                'is_active': cached_user['is_active'],
-                'fp': cached_user['fp'],
-                'role': cached_user['role'],
-                'id': cached_user['id']
-            })
-        else:
-            # If not in cache, get from database
-            user_repo = UserRepository(db)
-            user = await user_repo.get_user_by_fp(token_data["fp"])
-            if not user:
-                logger.warning(f"User not found for token fp: {token_data['fp']}")
-                raise CustomAuthException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="User not found",
-                    headers={"WWW-Authenticate": "Bearer"}
-                )
+            return type('User', (), cached_user)
 
-            # Cache user data for future requests
-            user_cache_data = {
-                'email': user.email,
-                'full_name': user.full_name,
-                'is_active': user.is_active,
-                'fp': user.fp,
-                'role': user.role.value,
-                'id': user.id
-            }
-            await cache_user_data(user_cache_data)
+        # If not in cache, get from database
+        user_repo = UserRepository(db)
+        user = await user_repo.get_user_by_fp(token_data["fp"])
+        if not user:
+            logger.warning(f"User not found for token fp: {token_data['fp']}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
-        logger.debug(f"Successfully authenticated user: {user.email}")
+        # Cache user data
+        user_cache_data = {
+            'email': user.email,
+            'full_name': user.full_name,
+            'is_active': user.is_active,
+            'fp': user.fp,
+            'role': user.role.value,
+            'id': user.id
+        }
+        await cache_user_data(user_cache_data)
         return user
 
-    except CustomAuthException:
-        raise
     except Exception as e:
         logger.error(f"Authentication error: {str(e)}")
-        raise CustomAuthException(
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",
             headers={"WWW-Authenticate": "Bearer"}
         )
 
-def admin_required(user = Depends(get_current_user)):
-    """
-    Dependency wrapper that checks if the user has admin role
-    This doesn't add any parameters to the OpenAPI schema
-    """
-    if user.role != UserRole.ADMIN:
-        logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
-        )
-    return user
-
-@router.post("/register", response_model=BaseResponse[LoginResponse], 
-            summary="Register new user",
-            description="Register a new user with email and password. Creates a trial subscription automatically.")
+@router.post("/register", response_model=BaseResponse[LoginResponse])
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Register a new user with the following information:
-    - email: Valid email address
-    - password: Minimum 8 characters
-    - full_name: User's full name
-
-    Returns:
-    - access_token: JWT token for authentication
-    """
+    """Register a new user"""
     try:
         user_repo = UserRepository(db)
-        existing_user = await user_repo.get_user_by_email(request.email)
 
-        if existing_user:
-            logger.warning(f"Registration attempt with existing email: {request.email}")
+        # Create new user
+        user_data = {
+            "email": request.email,
+            "hashed_password": get_password_hash(request.password),
+            "full_name": request.full_name,
+            "is_active": True,
+            "role": UserRole.USER
+        }
+
+        # Attempt to create the user
+        user = await user_repo.insert_user(user_data)
+        if not user:
+            logger.warning(f"Failed to create user with email: {request.email}")
             return BaseResponse(
                 success=False,
                 message="Registration failed",
-                error=ErrorResponse(message="Email already registered")
+                error=ErrorResponse(message="Email already registered or database error")
             )
 
-        # Create new user with hashed password
-        hashed_password = get_password_hash(request.password)
-        user_data = {
-            "email": request.email,
-            "hashed_password": hashed_password,
-            "full_name": request.full_name,
-            "is_active": True,
-            "role": UserRole.USER  # Default role is USER
-        }
-
-        # Create user first
-        user = await user_repo.insert_user(user_data)
-        logger.info(f"New user registered successfully: {request.email} with fp: {user.fp}")
-
+        # Start trial subscription
         try:
-            # Start trial period
             subscription_repo = SubscriptionRepository(db)
             await subscription_repo.create_trial_subscription(user.id)
             logger.info(f"Trial subscription created for user: {user.email}")
         except Exception as e:
             logger.error(f"Error creating trial subscription: {str(e)}")
-            # Continue with user creation even if subscription creation fails
-            # We can handle this case later through admin panel or background job
+            # Continue even if subscription creation fails - we can handle this later
 
         # Cache user data
         user_cache_data = {
@@ -190,27 +128,23 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "fp": user.fp
         })
 
+        logger.info(f"Successfully registered user: {user.email}")
         return BaseResponse(
+            success=True,
             data=LoginResponse(access_token=access_token),
             message="Registration successful"
         )
 
     except Exception as e:
         logger.error(f"Registration error: {str(e)}")
-        return BaseResponse(success=False, error=ErrorResponse(message=str(e)))
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message="Registration failed due to server error")
+        )
 
-@router.post("/login", response_model=BaseResponse[LoginResponse],
-            summary="User login",
-            description="Authenticate user with email and password")
+@router.post("/login", response_model=BaseResponse[LoginResponse])
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Authenticate a user with:
-    - email: Registered email address
-    - password: User's password
-
-    Returns:
-    - access_token: JWT token for authentication
-    """
+    """Authenticate user"""
     try:
         user_repo = UserRepository(db)
         user = await user_repo.get_user_by_email(request.email)
@@ -223,7 +157,7 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
                 error=ErrorResponse(message="Invalid credentials")
             )
 
-        # Cache user data after successful login
+        # Cache user data
         user_cache_data = {
             "email": user.email,
             "full_name": user.full_name,
@@ -241,13 +175,30 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
         logger.info(f"Successful login for user: {request.email}")
         return BaseResponse(
+            success=True,
             data=LoginResponse(access_token=access_token),
             message="Login successful"
         )
 
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
-        return BaseResponse(success=False, error=ErrorResponse(message=str(e)))
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message="Login failed")
+        )
+
+def admin_required(user = Depends(get_current_user)):
+    """
+    Dependency wrapper that checks if the user has admin role
+    This doesn't add any parameters to the OpenAPI schema
+    """
+    if user.role != UserRole.ADMIN:
+        logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return user
 
 @router.get("/me", response_model=BaseResponse[dict],
            summary="Get current user",
