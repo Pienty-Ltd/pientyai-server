@@ -136,6 +136,19 @@ async def startup_event():
     try:
         await create_tables()
         logger.info("Database tables created successfully")
+
+        # Setup dashboard stats cron jobs
+        try:
+            db = await get_db().__anext__()
+            await db.execute(text("SELECT manage_dashboard_stats_cron_jobs()"))
+            await db.commit()
+            logger.info("Dashboard stats cron jobs setup completed")
+        except Exception as e:
+            logger.error(f"Error setting up dashboard stats cron jobs: {str(e)}")
+        finally:
+            if 'db' in locals():
+                await db.close()
+
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
         raise
