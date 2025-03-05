@@ -1,11 +1,10 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database.database_factory import Base
 from app.core.utils import create_random_key
 from pgvector.sqlalchemy import Vector
 import enum
-from sqlalchemy.sql import CheckConstraint
 
 # Association table for User-Organization many-to-many relationship
 user_organizations = Table(
