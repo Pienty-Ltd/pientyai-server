@@ -6,6 +6,28 @@ from app.core.utils import create_random_key
 from pgvector.sqlalchemy import Vector
 import enum
 
+class UserRole(str, enum.Enum):
+    ADMIN = "admin"
+    USER = "user"
+
+class SubscriptionStatus(enum.Enum):
+    TRIAL = "trial"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+class PaymentStatus(enum.Enum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+class FileStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 # Association table for User-Organization many-to-many relationship
 user_organizations = Table(
     'user_organizations',
@@ -13,10 +35,6 @@ user_organizations = Table(
     Column('user_id', Integer, ForeignKey('users.id'), primary_key=True),
     Column('organization_id', Integer, ForeignKey('organizations.id'), primary_key=True)
 )
-
-class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    USER = "user"
 
 class User(Base):
     __tablename__ = "users"
@@ -29,7 +47,7 @@ class User(Base):
     full_name = Column(String)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.USER)
     is_active = Column(Boolean, default=True)
-    last_login = Column(DateTime(timezone=True), nullable=True)  # Added last_login field
+    last_login = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -157,21 +175,3 @@ class DashboardStats(Base):
 
 User.dashboard_stats = relationship("DashboardStats", back_populates="user")
 Organization.dashboard_stats = relationship("DashboardStats", back_populates="organization")
-
-class SubscriptionStatus(enum.Enum):
-    TRIAL = "trial"
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    CANCELED = "canceled"
-
-class PaymentStatus(enum.Enum):
-    PENDING = "pending"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    REFUNDED = "refunded"
-
-class FileStatus(str, enum.Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"

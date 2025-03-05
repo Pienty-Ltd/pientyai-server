@@ -15,23 +15,35 @@ class DashboardStatsRepository:
     async def get_user_stats(self, user_id: int) -> Optional[DashboardStats]:
         """Get dashboard statistics for a specific user"""
         try:
+            logger.info(f"Fetching stats for user_id: {user_id}")
             result = await self.db.execute(
                 select(DashboardStats).filter(DashboardStats.user_id == user_id)
             )
-            return result.scalar_one_or_none()
+            stats = result.scalar_one_or_none()
+            if stats:
+                logger.info(f"Found stats for user_id {user_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
+            else:
+                logger.warning(f"No stats found for user_id {user_id}")
+            return stats
         except Exception as e:
-            logger.error(f"Error fetching user stats: {str(e)}")
+            logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
             return None
 
     async def get_organization_stats(self, organization_id: int) -> Optional[DashboardStats]:
         """Get dashboard statistics for a specific organization"""
         try:
+            logger.info(f"Fetching stats for organization_id: {organization_id}")
             result = await self.db.execute(
                 select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
             )
-            return result.scalar_one_or_none()
+            stats = result.scalar_one_or_none()
+            if stats:
+                logger.info(f"Found stats for organization_id {organization_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
+            else:
+                logger.warning(f"No stats found for organization_id {organization_id}")
+            return stats
         except Exception as e:
-            logger.error(f"Error fetching organization stats: {str(e)}")
+            logger.error(f"Error fetching organization stats: {str(e)}", exc_info=True)
             return None
 
     async def update_stats(self) -> None:
