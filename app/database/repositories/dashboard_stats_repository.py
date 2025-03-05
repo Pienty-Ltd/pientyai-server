@@ -5,97 +5,174 @@ from sqlalchemy import and_, or_
 from app.database.models.db_models import DashboardStats, User, Organization, KnowledgeBase, File
 from typing import Optional, List, Dict, Any
 import logging
+from datetime import datetime, timedelta
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 class DashboardStatsRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._cache = {}
+        self._cache_timeout = 300  # 5 minutes cache timeout
+        self._cache_lock = asyncio.Lock()
+
+    async def _get_from_cache(self, cache_key: str) -> Optional[DashboardStats]:
+        """Get stats from cache if available and not expired"""
+        async with self._cache_lock:
+            if cache_key in self._cache:
+                data, timestamp = self._cache[cache_key]
+                if datetime.now() - timestamp < timedelta(seconds=self._cache_timeout):
+                    logger.debug(f"Cache hit for key: {cache_key}")
+                    return data
+                else:
+                    logger.debug(f"Cache expired for key: {cache_key}")
+                    del self._cache[cache_key]
+            return None
+
+    async def _set_cache(self, cache_key: str, data: DashboardStats) -> None:
+        """Set stats in cache with current timestamp"""
+        async with self._cache_lock:
+            self._cache[cache_key] = (data, datetime.now())
+            logger.debug(f"Cache set for key: {cache_key}")
 
     async def get_user_stats(self, user_id: int) -> Optional[DashboardStats]:
-        """Get dashboard statistics for a specific user"""
+        """Get dashboard statistics for a specific user with caching"""
         try:
+            cache_key = f"user_stats_{user_id}"
+            cached_stats = await self._get_from_cache(cache_key)
+            if cached_stats:
+                return cached_stats
+
             logger.info(f"Fetching stats for user_id: {user_id}")
-            result = await self.db.execute(
-                select(DashboardStats).filter(DashboardStats.user_id == user_id)
-            )
-            stats = result.scalar_one_or_none()
+
+            # Try to get stats from materialized view first
+            result = await self.db.execute(text("""
+                SELECT * FROM mv_user_stats WHERE user_id = :user_id
+            """), {"user_id": user_id})
+            row = result.fetchone()
+
+            if not row:
+                # If not in materialized view, update stats for this user
+                await self.db.execute(text("""
+                    SELECT update_user_stats(:user_id)
+                """), {"user_id": user_id})
+                await self.db.commit()
+
+                # Get updated stats
+                result = await self.db.execute(
+                    select(DashboardStats).filter(DashboardStats.user_id == user_id)
+                )
+                stats = result.scalar_one_or_none()
+            else:
+                # Convert materialized view row to DashboardStats
+                stats = DashboardStats(
+                    user_id=row.user_id,
+                    total_knowledge_base_count=row.total_knowledge_base_count,
+                    total_file_count=row.total_file_count,
+                    total_storage_used=row.total_storage_used,
+                    last_activity_date=row.last_activity_date
+                )
+
             if stats:
                 logger.info(f"Found stats for user_id {user_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
+                await self._set_cache(cache_key, stats)
             else:
                 logger.warning(f"No stats found for user_id {user_id}")
+
             return stats
+
         except Exception as e:
             logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
             return None
 
     async def get_organization_stats(self, organization_id: int) -> Optional[DashboardStats]:
-        """Get dashboard statistics for a specific organization"""
+        """Get dashboard statistics for a specific organization with caching"""
         try:
+            cache_key = f"org_stats_{organization_id}"
+            cached_stats = await self._get_from_cache(cache_key)
+            if cached_stats:
+                return cached_stats
+
             logger.info(f"Fetching stats for organization_id: {organization_id}")
-            result = await self.db.execute(
-                select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
-            )
-            stats = result.scalar_one_or_none()
+
+            # Try to get stats from materialized view first
+            result = await self.db.execute(text("""
+                SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
+            """), {"organization_id": organization_id})
+            row = result.fetchone()
+
+            if not row:
+                # If not in materialized view, update stats for this organization
+                await self.db.execute(text("""
+                    SELECT update_organization_stats(:organization_id)
+                """), {"organization_id": organization_id})
+                await self.db.commit()
+
+                # Get updated stats
+                result = await self.db.execute(
+                    select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
+                )
+                stats = result.scalar_one_or_none()
+            else:
+                # Convert materialized view row to DashboardStats
+                stats = DashboardStats(
+                    organization_id=row.organization_id,
+                    total_knowledge_base_count=row.total_knowledge_base_count,
+                    total_file_count=row.total_file_count,
+                    total_storage_used=row.total_storage_used,
+                    last_activity_date=row.last_activity_date
+                )
+
             if stats:
                 logger.info(f"Found stats for organization_id {organization_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
+                await self._set_cache(cache_key, stats)
             else:
                 logger.warning(f"No stats found for organization_id {organization_id}")
+
             return stats
+
         except Exception as e:
             logger.error(f"Error fetching organization stats: {str(e)}", exc_info=True)
             return None
 
-    async def update_stats(self) -> None:
-        """Update all dashboard statistics"""
+    async def update_stats(self, batch_size: int = 1000) -> None:
+        """Update all dashboard statistics using materialized views and batching"""
         try:
-            # Update user statistics
-            await self.db.execute(text("""
-                INSERT INTO dashboard_stats (user_id, total_knowledge_base_count, total_file_count, total_storage_used, last_activity_date)
-                SELECT 
-                    u.id as user_id,
-                    COUNT(DISTINCT kb.id) as total_knowledge_base_count,
-                    COUNT(DISTINCT f.id) as total_file_count,
-                    COALESCE(SUM(f.file_size), 0) as total_storage_used,
-                    MAX(GREATEST(kb.updated_at, f.updated_at)) as last_activity_date
-                FROM users u
-                LEFT JOIN files f ON f.user_id = u.id
-                LEFT JOIN knowledge_base kb ON kb.file_id = f.id
-                GROUP BY u.id
-                ON CONFLICT (user_id) WHERE user_id IS NOT NULL
-                DO UPDATE SET
-                    total_knowledge_base_count = EXCLUDED.total_knowledge_base_count,
-                    total_file_count = EXCLUDED.total_file_count,
-                    total_storage_used = EXCLUDED.total_storage_used,
-                    last_activity_date = EXCLUDED.last_activity_date,
-                    last_updated = CURRENT_TIMESTAMP
-            """))
+            # First refresh materialized views
+            await self.db.execute(text("SELECT refresh_dashboard_stats_views()"))
 
-            # Update organization statistics
+            # Then update dashboard_stats table using the updated views
             await self.db.execute(text("""
-                INSERT INTO dashboard_stats (organization_id, total_knowledge_base_count, total_file_count, total_storage_used, last_activity_date)
-                SELECT 
-                    o.id as organization_id,
-                    COUNT(DISTINCT kb.id) as total_knowledge_base_count,
-                    COUNT(DISTINCT f.id) as total_file_count,
-                    COALESCE(SUM(f.file_size), 0) as total_storage_used,
-                    MAX(GREATEST(kb.updated_at, f.updated_at)) as last_activity_date
-                FROM organizations o
-                LEFT JOIN files f ON f.organization_id = o.id
-                LEFT JOIN knowledge_base kb ON kb.file_id = f.id
-                GROUP BY o.id
-                ON CONFLICT (organization_id) WHERE organization_id IS NOT NULL
-                DO UPDATE SET
-                    total_knowledge_base_count = EXCLUDED.total_knowledge_base_count,
-                    total_file_count = EXCLUDED.total_file_count,
-                    total_storage_used = EXCLUDED.total_storage_used,
-                    last_activity_date = EXCLUDED.last_activity_date,
-                    last_updated = CURRENT_TIMESTAMP
-            """))
+                SELECT update_dashboard_stats(:batch_size)
+            """), {"batch_size": batch_size})
 
             await self.db.commit()
-            logger.info("Successfully updated dashboard statistics")
+            logger.info(f"Successfully updated dashboard statistics with batch size {batch_size}")
+
+            # Clear cache after update
+            async with self._cache_lock:
+                self._cache.clear()
+            logger.info("Cache cleared after statistics update")
+
         except Exception as e:
-            logger.error(f"Error updating dashboard statistics: {str(e)}")
+            logger.error(f"Error updating dashboard statistics: {str(e)}", exc_info=True)
             await self.db.rollback()
             raise
+
+    async def invalidate_cache(self, user_id: Optional[int] = None, organization_id: Optional[int] = None) -> None:
+        """Invalidate cache for specific user or organization, or all if none specified"""
+        async with self._cache_lock:
+            if user_id:
+                cache_key = f"user_stats_{user_id}"
+                if cache_key in self._cache:
+                    del self._cache[cache_key]
+                    logger.debug(f"Cache invalidated for user_id {user_id}")
+            elif organization_id:
+                cache_key = f"org_stats_{organization_id}"
+                if cache_key in self._cache:
+                    del self._cache[cache_key]
+                    logger.debug(f"Cache invalidated for organization_id {organization_id}")
+            else:
+                self._cache.clear()
+                logger.debug("All cache invalidated")
