@@ -60,3 +60,5 @@ python-docx
 PyPDF2
 python-docx
 python-multipart
+flask-login
+flask-wtf

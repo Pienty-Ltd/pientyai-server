@@ -5,6 +5,7 @@ from app.database.database_factory import Base
 from app.core.utils import create_random_key
 from pgvector.sqlalchemy import Vector
 import enum
+from sqlalchemy.sql import CheckConstraint
 
 # Association table for User-Organization many-to-many relationship
 user_organizations = Table(
@@ -59,6 +60,7 @@ class User(Base):
     subscription = relationship("UserSubscription", back_populates="user", uselist=False)
     payment_history = relationship("PaymentHistory", back_populates="user")
     files = relationship("File", back_populates="user")
+    dashboard_stats = relationship("DashboardStats", back_populates="user")
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -78,6 +80,7 @@ class Organization(Base):
     )
     files = relationship("File", back_populates="organization")
     knowledge_base = relationship("KnowledgeBase", back_populates="organization")
+    dashboard_stats = relationship("DashboardStats", back_populates="organization")
 
 class File(Base):
     __tablename__ = "files"
@@ -149,3 +152,28 @@ class PaymentHistory(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="payment_history")
+
+
+class DashboardStats(Base):
+    __tablename__ = "dashboard_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    total_knowledge_base_count = Column(Integer, default=0)
+    total_file_count = Column(Integer, default=0)
+    total_storage_used = Column(Integer, default=0)  # in bytes
+    last_activity_date = Column(DateTime(timezone=True))
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # A row can be either for a user or an organization, but not both
+    __table_args__ = (
+        CheckConstraint('NOT(user_id IS NULL AND organization_id IS NULL)'),
+        CheckConstraint('NOT(user_id IS NOT NULL AND organization_id IS NOT NULL)'),
+    )
+
+    user = relationship("User", back_populates="dashboard_stats")
+    organization = relationship("Organization", back_populates="dashboard_stats")
+
+User.dashboard_stats = relationship("DashboardStats", back_populates="user")
+Organization.dashboard_stats = relationship("DashboardStats", back_populates="organization")
