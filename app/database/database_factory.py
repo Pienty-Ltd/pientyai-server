@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from sqlalchemy import text
+from app.database.utils import execute_sql_commands
 
 logger = logging.getLogger(__name__)
 
@@ -15,16 +16,14 @@ async_session_maker = async_sessionmaker(autocommit=False, autoflush=False, bind
 Base = declarative_base()
 
 async def execute_sql_file(session: AsyncSession, file_path: str) -> None:
-    """Execute a SQL file"""
+    """Execute a SQL file by splitting it into individual commands"""
     try:
         with open(file_path, 'r') as f:
             sql_content = f.read()
 
-        # Execute the entire SQL file as a single transaction
-        async with session.begin():
-            await session.execute(text(sql_content))
-            await session.commit()
-            logger.info(f"Successfully executed SQL file: {file_path}")
+        # Execute commands using the utility function
+        await execute_sql_commands(session, sql_content)
+        logger.info(f"Successfully executed SQL file: {file_path}")
     except Exception as e:
         logger.error(f"Error executing SQL file {file_path}: {str(e)}")
         raise
@@ -38,18 +37,16 @@ async def init_database_procedures() -> None:
             logger.warning(f"SQL directory not found: {sql_dir}")
             return
 
-        # Get .sql files and sort them by name to ensure correct order
-        sql_files = sorted([f for f in sql_dir.glob('*.sql')])
-        if not sql_files:
-            logger.warning("No SQL files found in the SQL directory")
-            return
+        # Execute init.sql first if it exists
+        init_sql = sql_dir / 'init.sql'
+        if init_sql.exists():
+            logger.info("Executing database initialization SQL")
+            async with async_session_maker() as session:
+                await execute_sql_file(session, str(init_sql))
+                logger.info("Successfully initialized database procedures")
+        else:
+            logger.warning("init.sql not found in the SQL directory")
 
-        async with async_session_maker() as session:
-            for sql_file in sql_files:
-                logger.info(f"Processing SQL file: {sql_file}")
-                await execute_sql_file(session, str(sql_file))
-
-        logger.info("Successfully initialized all database procedures")
     except Exception as e:
         logger.error(f"Error initializing database procedures: {str(e)}")
         raise
