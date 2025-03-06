@@ -5,7 +5,9 @@ DROP FUNCTION IF EXISTS public.update_organization_stats(integer) CASCADE;
 
 -- Create update stats function
 CREATE OR REPLACE FUNCTION public.update_dashboard_stats(batch_size integer DEFAULT 1000)
-RETURNS void AS $BODY$
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
 DECLARE
     user_cursor CURSOR FOR 
         SELECT user_id, total_knowledge_base_count, total_file_count, 
@@ -76,11 +78,13 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$BODY$ LANGUAGE plpgsql;
+$function$;
 
 -- Create user stats update function
 CREATE OR REPLACE FUNCTION public.update_user_stats(p_user_id integer)
-RETURNS void AS $BODY$
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
 BEGIN
     WITH user_stats AS (
         SELECT 
@@ -117,11 +121,13 @@ BEGIN
         last_activity_date = EXCLUDED.last_activity_date,
         last_updated = CURRENT_TIMESTAMP;
 END;
-$BODY$ LANGUAGE plpgsql;
+$function$;
 
 -- Create organization stats update function
 CREATE OR REPLACE FUNCTION public.update_organization_stats(p_organization_id integer)
-RETURNS void AS $BODY$
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
 BEGIN
     WITH org_stats AS (
         SELECT 
@@ -158,4 +164,4 @@ BEGIN
         last_activity_date = EXCLUDED.last_activity_date,
         last_updated = CURRENT_TIMESTAMP;
 END;
-$BODY$ LANGUAGE plpgsql;
+$function$;

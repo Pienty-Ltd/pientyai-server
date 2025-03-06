@@ -3,7 +3,9 @@ DROP FUNCTION IF EXISTS public.manage_dashboard_stats_cron_jobs() CASCADE;
 
 -- Create cron job management function
 CREATE OR REPLACE FUNCTION public.manage_dashboard_stats_cron_jobs()
-RETURNS void AS $BODY$
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
 BEGIN
     IF EXISTS (
         SELECT 1 
@@ -16,9 +18,9 @@ BEGIN
         -- Add new jobs
         INSERT INTO cron.job (jobname, schedule, command, nodename, nodeport, database, username)
         VALUES 
-            ('refresh_views_hourly', '*/30 * * * *', 'SELECT refresh_dashboard_stats_views()', 
+            ('refresh_views_hourly', '*/30 * * * *', 'SELECT public.refresh_dashboard_stats_views()', 
             'localhost', 5432, current_database(), current_user),
-            ('update_stats_hourly', '0 * * * *', 'SELECT update_dashboard_stats(1000)', 
+            ('update_stats_hourly', '0 * * * *', 'SELECT public.update_dashboard_stats(1000)', 
             'localhost', 5432, current_database(), current_user);
 
         RAISE NOTICE 'Dashboard stats cron jobs have been configured successfully';
@@ -28,7 +30,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'Error managing cron jobs: %', SQLERRM;
 END;
-$BODY$ LANGUAGE plpgsql;
+$function$;
 
 -- Initialize cron jobs
 SELECT public.manage_dashboard_stats_cron_jobs();
