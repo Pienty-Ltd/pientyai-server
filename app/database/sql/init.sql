@@ -74,28 +74,36 @@ DECLARE
                total_storage_used, last_activity_date 
         FROM mv_organization_stats;
     batch_counter integer := 0;
+    updated_rows integer;
 BEGIN
     FOR user_stat IN user_cursor LOOP
-        INSERT INTO dashboard_stats (
-            user_id,
-            total_knowledge_base_count,
-            total_file_count,
-            total_storage_used,
-            last_activity_date
-        ) VALUES (
-            user_stat.user_id,
-            user_stat.total_knowledge_base_count,
-            user_stat.total_file_count,
-            user_stat.total_storage_used,
-            user_stat.last_activity_date
-        )
-        ON CONFLICT (user_id) WHERE user_id IS NOT NULL
-        DO UPDATE SET
-            total_knowledge_base_count = EXCLUDED.total_knowledge_base_count,
-            total_file_count = EXCLUDED.total_file_count,
-            total_storage_used = EXCLUDED.total_storage_used,
-            last_activity_date = EXCLUDED.last_activity_date,
-            last_updated = CURRENT_TIMESTAMP;
+        -- First try to update
+        UPDATE dashboard_stats SET
+            total_knowledge_base_count = user_stat.total_knowledge_base_count,
+            total_file_count = user_stat.total_file_count,
+            total_storage_used = user_stat.total_storage_used,
+            last_activity_date = user_stat.last_activity_date,
+            last_updated = CURRENT_TIMESTAMP
+        WHERE user_id = user_stat.user_id;
+
+        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+
+        -- If no rows were updated, insert new record
+        IF updated_rows = 0 THEN
+            INSERT INTO dashboard_stats (
+                user_id,
+                total_knowledge_base_count,
+                total_file_count,
+                total_storage_used,
+                last_activity_date
+            ) VALUES (
+                user_stat.user_id,
+                user_stat.total_knowledge_base_count,
+                user_stat.total_file_count,
+                user_stat.total_storage_used,
+                user_stat.last_activity_date
+            );
+        END IF;
 
         batch_counter := batch_counter + 1;
         IF batch_counter >= batch_size THEN
@@ -106,26 +114,33 @@ BEGIN
 
     batch_counter := 0;
     FOR org_stat IN org_cursor LOOP
-        INSERT INTO dashboard_stats (
-            organization_id,
-            total_knowledge_base_count,
-            total_file_count,
-            total_storage_used,
-            last_activity_date
-        ) VALUES (
-            org_stat.organization_id,
-            org_stat.total_knowledge_base_count,
-            org_stat.total_file_count,
-            org_stat.total_storage_used,
-            org_stat.last_activity_date
-        )
-        ON CONFLICT (organization_id) WHERE organization_id IS NOT NULL
-        DO UPDATE SET
-            total_knowledge_base_count = EXCLUDED.total_knowledge_base_count,
-            total_file_count = EXCLUDED.total_file_count,
-            total_storage_used = EXCLUDED.total_storage_used,
-            last_activity_date = EXCLUDED.last_activity_date,
-            last_updated = CURRENT_TIMESTAMP;
+        -- First try to update
+        UPDATE dashboard_stats SET
+            total_knowledge_base_count = org_stat.total_knowledge_base_count,
+            total_file_count = org_stat.total_file_count,
+            total_storage_used = org_stat.total_storage_used,
+            last_activity_date = org_stat.last_activity_date,
+            last_updated = CURRENT_TIMESTAMP
+        WHERE organization_id = org_stat.organization_id;
+
+        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+
+        -- If no rows were updated, insert new record
+        IF updated_rows = 0 THEN
+            INSERT INTO dashboard_stats (
+                organization_id,
+                total_knowledge_base_count,
+                total_file_count,
+                total_storage_used,
+                last_activity_date
+            ) VALUES (
+                org_stat.organization_id,
+                org_stat.total_knowledge_base_count,
+                org_stat.total_file_count,
+                org_stat.total_storage_used,
+                org_stat.last_activity_date
+            );
+        END IF;
 
         batch_counter := batch_counter + 1;
         IF batch_counter >= batch_size THEN

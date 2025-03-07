@@ -51,7 +51,7 @@ class DashboardStatsRepository:
 
             logger.debug("Cache miss, querying database...")
 
-            # Try to get stats from materialized view first
+            # Try to get stats from materialized view
             try:
                 logger.debug("Querying materialized view...")
                 result = await self.db.execute(text("""
@@ -61,37 +61,20 @@ class DashboardStatsRepository:
                 logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
-                row = None
+                return None
 
             if not row:
-                logger.info("No data in materialized view, updating stats...")
-                try:
-                    # Update stats for this user
-                    await self.db.execute(text("""
-                        SELECT update_user_stats(:user_id)
-                    """), {"user_id": user_id})
-                    await self.db.commit()
-                    logger.debug("Successfully updated user stats")
+                logger.info(f"No stats found for user_id {user_id}")
+                return None
 
-                    # Get updated stats
-                    result = await self.db.execute(
-                        select(DashboardStats).filter(DashboardStats.user_id == user_id)
-                    )
-                    stats = result.scalar_one_or_none()
-                    logger.debug(f"Direct query result: {stats}")
-                except Exception as e:
-                    logger.error(f"Error updating user stats: {str(e)}\n{traceback.format_exc()}")
-                    return None
-            else:
-                logger.debug("Converting materialized view row to DashboardStats")
-                # Convert materialized view row to DashboardStats
-                stats = DashboardStats(
-                    user_id=row.user_id,
-                    total_knowledge_base_count=row.total_knowledge_base_count,
-                    total_file_count=row.total_file_count,
-                    total_storage_used=row.total_storage_used,
-                    last_activity_date=row.last_activity_date
-                )
+            # Convert materialized view row to DashboardStats
+            stats = DashboardStats(
+                user_id=row.user_id,
+                total_knowledge_base_count=row.total_knowledge_base_count,
+                total_file_count=row.total_file_count,
+                total_storage_used=row.total_storage_used,
+                last_activity_date=row.last_activity_date
+            )
 
             if stats:
                 logger.info(f"Found stats for user_id {user_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
