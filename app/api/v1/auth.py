@@ -7,13 +7,13 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from pydantic import BaseModel
 from app.schemas.base import BaseResponse, ErrorResponse
-from app.schemas.response import LoginResponse
+from app.schemas.response import LoginResponse, TokenResponse
 from app.schemas.request import LoginRequest, RegisterRequest
 from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
 from app.core.security import (get_password_hash, verify_password,
                              create_access_token, decode_access_token,
-                             cache_user_data, get_cached_user_data)
+                             cache_user_data, get_cached_user_data, create_tokens, decode_refresh_token)
 from app.database.repositories.subscription_repository import SubscriptionRepository
 from app.database.models.db_models import UserRole
 from sqlalchemy import func
@@ -37,7 +37,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             logger.warning("Invalid token data during authentication")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
+                detail={
+                    "message": "Authentication required",
+                    "logout": True,
+                    "details": [{"msg": "Authentication required"}]
+                },
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
@@ -48,7 +52,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             logger.warning(f"User not found for token fp: {token_data['fp']}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
+                detail={
+                    "message": "User not found",
+                    "logout": True,
+                    "details": [{"msg": "User not found"}]
+                },
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
@@ -70,13 +78,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
 
         return user
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logger.error(f"Authentication error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed",
+            detail={
+                "message": "Authentication failed",
+                "logout": True,
+                "details": [{"msg": "Authentication failed"}]
+            },
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 @router.post("/register", response_model=BaseResponse[LoginResponse])
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -103,15 +120,6 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
                 error=ErrorResponse(message="Email already registered or database error")
             )
 
-        # Start trial subscription
-        try:
-            subscription_repo = SubscriptionRepository(db)
-            await subscription_repo.create_trial_subscription(user.id)
-            logger.info(f"Trial subscription created for user: {user.email}")
-        except Exception as e:
-            logger.error(f"Error creating trial subscription: {str(e)}")
-            # Continue even if subscription creation fails - we can handle this later
-
         # Cache user data
         user_cache_data = {
             "email": user.email,
@@ -123,8 +131,8 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
         }
         await cache_user_data(user_cache_data)
 
-        # Generate access token
-        access_token = create_access_token(data={
+        # Generate token pair
+        access_token, refresh_token = create_tokens(data={
             "sub": user.email,
             "fp": user.fp
         })
@@ -132,7 +140,10 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
         logger.info(f"Successfully registered user: {user.email}")
         return BaseResponse(
             success=True,
-            data=LoginResponse(access_token=access_token),
+            data=LoginResponse(
+                access_token=access_token,
+                refresh_token=refresh_token
+            ),
             message="Registration successful"
         )
 
@@ -169,7 +180,8 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         }
         await cache_user_data(user_cache_data)
 
-        access_token = create_access_token(data={
+        # Generate token pair
+        access_token, refresh_token = create_tokens(data={
             "sub": user.email,
             "fp": user.fp
         })
@@ -177,7 +189,10 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         logger.info(f"Successful login for user: {request.email}")
         return BaseResponse(
             success=True,
-            data=LoginResponse(access_token=access_token),
+            data=LoginResponse(
+                access_token=access_token,
+                refresh_token=refresh_token
+            ),
             message="Login successful"
         )
 
@@ -186,6 +201,65 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         return BaseResponse(
             success=False,
             error=ErrorResponse(message="Login failed")
+        )
+
+@router.post("/refresh", response_model=BaseResponse[TokenResponse])
+async def refresh_token(
+    request: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Refresh access token using refresh token"""
+    try:
+        # Verify refresh token
+        token_data = decode_refresh_token(request.refresh_token)
+        if not token_data:
+            logger.warning("Invalid refresh token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "message": "Invalid refresh token",
+                    "logout": True,
+                    "details": [{"msg": "Invalid refresh token"}]
+                }
+            )
+
+        # Get user from database
+        user_repo = UserRepository(db)
+        user = await user_repo.get_user_by_fp(token_data["fp"])
+        if not user:
+            logger.warning(f"User not found for refresh token fp: {token_data['fp']}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "message": "User not found",
+                    "logout": True,
+                    "details": [{"msg": "User not found"}]
+                }
+            )
+
+        # Generate new token pair
+        access_token, refresh_token = create_tokens(data={
+            "sub": user.email,
+            "fp": user.fp
+        })
+
+        logger.info(f"Token refreshed for user: {user.email}")
+        return BaseResponse(
+            success=True,
+            data=TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token
+            ),
+            message="Token refreshed successfully"
+        )
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Token refresh error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=ErrorResponse(message="Token refresh failed")
         )
 
 def admin_required(user = Depends(get_current_user)):
@@ -197,7 +271,11 @@ def admin_required(user = Depends(get_current_user)):
         logger.warning(f"Non-admin user attempted to access admin endpoint: {user.email}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
+            detail={
+                "message": "Admin privileges required",
+                "logout": True,
+                "details": [{"msg": "Admin privileges required"}]
+            }
         )
     return user
 

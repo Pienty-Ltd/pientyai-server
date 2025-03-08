@@ -74,21 +74,36 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     status_code = exc.status_code
     headers = getattr(exc, 'headers', None)
 
-    error_message = str(exc.detail)
-    if status_code == 401:
-        error_message = "Authentication required"
-    elif status_code == 403:
-        error_message = "Permission denied"
+    # If detail is a dict, preserve its structure; otherwise create a standard format
+    if isinstance(exc.detail, dict):
+        error_detail = exc.detail
+        logger.debug(f"Using original error detail structure: {error_detail}")
+    else:
+        error_message = str(exc.detail)
+        if status_code in [401, 403]:  # Authentication/Authorization errors
+            error_message = "Authentication required" if status_code == 401 else "Permission denied"
+            error_detail = {
+                "message": error_message,
+                "logout": True,
+                "details": [{"msg": error_message}]
+            }
+        else:
+            error_detail = {
+                "message": error_message,
+                "logout": False,
+                "details": [{"msg": error_message}]
+            }
+        logger.debug(f"Created standard error detail structure: {error_detail}")
 
-    return JSONResponse(status_code=status_code,
-                        content=BaseResponse(success=False,
-                                             message="Request failed",
-                                             error=ErrorResponse(
-                                                 message=error_message,
-                                                 details=[{
-                                                     "msg": error_message
-                                                 }])).dict(),
-                        headers=headers)
+    return JSONResponse(
+        status_code=status_code,
+        content=BaseResponse(
+            success=False,
+            message="Request failed",
+            error=ErrorResponse(**error_detail)
+        ).dict(),
+        headers=headers
+    )
 
 
 # Global exception handler for unhandled exceptions
@@ -114,7 +129,6 @@ async def root():
 @app.get("/health")
 async def health_check():
     return BaseResponse(data={"status": "healthy", "version": app.version})
-
 
 @app.on_event("startup")
 async def startup_event():
@@ -144,6 +158,7 @@ async def startup_event():
 if __name__ == "__main__":
     # Always serve on port 5000 as per requirements
     port = int(os.environ.get("PORT", 5000))
+    import uvicorn
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
