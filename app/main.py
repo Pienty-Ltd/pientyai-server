@@ -21,28 +21,32 @@ project_name = "Pienty.AI"
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format=f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    format=
+    f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title=f"{project_name} API",
-    description=f"{project_name} API Documentation",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_tags=[{
-        "name": "Authentication",
-        "description": "User authentication and authorization operations"
-    }, {
-        "name": "Admin",
-        "description": "Administrative operations"
-    }, {
-        "name": "Documents",
-        "description": "Document management and knowledge base operations"
-    }, {
-        "name": "Payments",
-        "description": "Payment processing and management"
-    }])
+app = FastAPI(title=f"{project_name} API",
+              description=f"{project_name} API Documentation",
+              version="1.0.0",
+              docs_url="/docs",
+              redoc_url="/redoc",
+              openapi_tags=[{
+                  "name":
+                  "Authentication",
+                  "description":
+                  "User authentication and authorization operations"
+              }, {
+                  "name": "Admin",
+                  "description": "Administrative operations"
+              }, {
+                  "name":
+                  "Documents",
+                  "description":
+                  "Document management and knowledge base operations"
+              }, {
+                  "name": "Payments",
+                  "description": "Payment processing and management"
+              }])
 
 # CORS middleware configuration
 app.add_middleware(
@@ -66,20 +70,17 @@ app.include_router(dashboard_router)
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):
     logger.warning(f"Validation error: {str(exc)}")
-    return JSONResponse(
-        status_code=422,
-        content=BaseResponse(
-            success=False,
-            message="Validation Error",
-            error=ErrorResponse(
-                message="Invalid request data",
-                details=[{
-                    "loc": err["loc"],
-                    "msg": err["msg"]
-                } for err in exc.errors()]
-            )
-        ).dict()
-    )
+    return JSONResponse(status_code=422,
+                        content=BaseResponse(
+                            success=False,
+                            message="Validation Error",
+                            error=ErrorResponse(message="Invalid request data",
+                                                details=[{
+                                                    "loc": err["loc"],
+                                                    "msg": err["msg"]
+                                                } for err in exc.errors()
+                                                         ])).dict())
+
 
 # Handle unauthorized access and authentication errors
 @app.exception_handler(HTTPException)
@@ -94,18 +95,16 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     elif status_code == 403:
         error_message = "Permission denied"
 
-    return JSONResponse(
-        status_code=status_code,
-        content=BaseResponse(
-            success=False,
-            message="Request failed",
-            error=ErrorResponse(
-                message=error_message,
-                details=[{"msg": error_message}]
-            )
-        ).dict(),
-        headers=headers
-    )
+    return JSONResponse(status_code=status_code,
+                        content=BaseResponse(success=False,
+                                             message="Request failed",
+                                             error=ErrorResponse(
+                                                 message=error_message,
+                                                 details=[{
+                                                     "msg": error_message
+                                                 }])).dict(),
+                        headers=headers)
+
 
 # Global exception handler for unhandled exceptions
 @app.exception_handler(Exception)
@@ -116,19 +115,21 @@ async def global_exception_handler(request: Request, exc: Exception):
         content=BaseResponse(
             success=False,
             message="Internal Server Error",
-            error=ErrorResponse(message="An unexpected error occurred")
-        ).dict()
-    )
+            error=ErrorResponse(
+                message="An unexpected error occurred")).dict())
+
 
 # Root endpoint
 @app.get("/")
 async def root():
     return BaseResponse(message=f"Welcome to {project_name} API")
 
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     return BaseResponse(data={"status": "healthy", "version": app.version})
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -144,7 +145,8 @@ async def startup_event():
             await db.commit()
             logger.info("Dashboard stats cron jobs setup completed")
         except Exception as e:
-            logger.error(f"Error setting up dashboard stats cron jobs: {str(e)}")
+            logger.error(
+                f"Error setting up dashboard stats cron jobs: {str(e)}")
         finally:
             if 'db' in locals():
                 await db.close()
@@ -153,12 +155,11 @@ async def startup_event():
         logger.error(f"Error during startup: {str(e)}")
         raise
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8080,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("app.main:app",
+                host="0.0.0.0",
+                port=8080,
+                reload=True,
+                log_level="info")

@@ -12,8 +12,12 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = config.DATABASE_URL
 
 engine = create_async_engine(DATABASE_URL, echo=True)
-async_session_maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
+async_session_maker = async_sessionmaker(autocommit=False,
+                                         autoflush=False,
+                                         bind=engine,
+                                         class_=AsyncSession)
 Base = declarative_base()
+
 
 async def execute_sql_file(session: AsyncSession, file_path: str) -> None:
     """Execute a SQL file by splitting it into individual commands"""
@@ -27,6 +31,7 @@ async def execute_sql_file(session: AsyncSession, file_path: str) -> None:
     except Exception as e:
         logger.error(f"Error executing SQL file {file_path}: {str(e)}")
         raise
+
 
 async def init_database_procedures() -> None:
     """Initialize database procedures from SQL files"""
@@ -51,17 +56,18 @@ async def init_database_procedures() -> None:
         logger.error(f"Error initializing database procedures: {str(e)}")
         raise
 
+
 async def create_tables():
     """Create all database tables"""
     try:
         async with engine.begin() as conn:
             # Import all models here to ensure they're registered with SQLAlchemy
-            from app.database.models import (
-                User, Organization, UserSubscription,
-                PaymentHistory, PromoCode, PromoCodeUsage,
-                UserRole, PaymentStatus, SubscriptionStatus,
-                File, KnowledgeBase, FileStatus
-            )
+            from app.database.models import (User, Organization,
+                                             UserSubscription, PaymentHistory,
+                                             PromoCode, PromoCodeUsage,
+                                             UserRole, PaymentStatus,
+                                             SubscriptionStatus, File,
+                                             KnowledgeBase, FileStatus)
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Successfully created database tables")
 
@@ -70,10 +76,11 @@ async def create_tables():
             logger.info(f"Created tables: {', '.join(tables)}")
 
             # Initialize database procedures after creating tables
-            await init_database_procedures()
+            #await init_database_procedures()
     except Exception as e:
         logger.error(f"Error creating database tables: {str(e)}")
         raise
+
 
 async def get_db():
     """Get database session"""
