@@ -1,4 +1,5 @@
 import logging
+import os
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,38 +22,22 @@ project_name = "Pienty.AI"
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format=
-    f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    format=f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=f"{project_name} API",
-              description=f"{project_name} API Documentation",
-              version="1.0.0",
-              docs_url="/docs",
-              redoc_url="/redoc",
-              openapi_tags=[{
-                  "name":
-                  "Authentication",
-                  "description":
-                  "User authentication and authorization operations"
-              }, {
-                  "name": "Admin",
-                  "description": "Administrative operations"
-              }, {
-                  "name":
-                  "Documents",
-                  "description":
-                  "Document management and knowledge base operations"
-              }, {
-                  "name": "Payments",
-                  "description": "Payment processing and management"
-              }])
+app = FastAPI(
+    title=f"{project_name} API",
+    description=f"{project_name} API Documentation",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update with specific origins in production
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # Disable credentials since we're using allow_origins="*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -75,11 +60,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
                             success=False,
                             message="Validation Error",
                             error=ErrorResponse(message="Invalid request data",
-                                                details=[{
-                                                    "loc": err["loc"],
-                                                    "msg": err["msg"]
-                                                } for err in exc.errors()
-                                                         ])).dict())
+                                                 details=[{
+                                                     "loc": err["loc"],
+                                                     "msg": err["msg"]
+                                                 } for err in exc.errors()
+                                                          ])).dict())
 
 
 # Handle unauthorized access and authentication errors
@@ -157,9 +142,12 @@ async def startup_event():
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app",
-                host="0.0.0.0",
-                port=8080,
-                reload=True,
-                log_level="info")
+    # Always serve on port 5000 as per requirements
+    port = int(os.environ.get("PORT", 5000))
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True,
+        log_level="info"
+    )
