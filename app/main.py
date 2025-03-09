@@ -22,22 +22,22 @@ project_name = "Pienty.AI"
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format=f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    format=
+    f'{project_name} %(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title=f"{project_name} API",
-    description=f"{project_name} API Documentation",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = FastAPI(title=f"{project_name} API",
+              description=f"{project_name} API Documentation",
+              version="1.0.0",
+              docs_url="/docs",
+              redoc_url="/redoc")
 
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,  # Disable credentials since we're using allow_origins="*"
+    allow_credentials=
+    False,  # Disable credentials since we're using allow_origins="*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -60,11 +60,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
                             success=False,
                             message="Validation Error",
                             error=ErrorResponse(message="Invalid request data",
-                                                 details=[{
-                                                     "loc": err["loc"],
-                                                     "msg": err["msg"]
-                                                 } for err in exc.errors()
-                                                          ])).dict())
+                                                details=[{
+                                                    "loc": err["loc"],
+                                                    "msg": err["msg"]
+                                                } for err in exc.errors()
+                                                         ])).dict())
 
 
 # Handle unauthorized access and authentication errors
@@ -85,25 +85,27 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             error_detail = {
                 "message": error_message,
                 "logout": True,
-                "details": [{"msg": error_message}]
+                "details": [{
+                    "msg": error_message
+                }]
             }
         else:
             error_detail = {
                 "message": error_message,
                 "logout": False,
-                "details": [{"msg": error_message}]
+                "details": [{
+                    "msg": error_message
+                }]
             }
-        logger.debug(f"Created standard error detail structure: {error_detail}")
+        logger.debug(
+            f"Created standard error detail structure: {error_detail}")
 
-    return JSONResponse(
-        status_code=status_code,
-        content=BaseResponse(
-            success=False,
-            message="Request failed",
-            error=ErrorResponse(**error_detail)
-        ).dict(),
-        headers=headers
-    )
+    return JSONResponse(status_code=status_code,
+                        content=BaseResponse(
+                            success=False,
+                            message="Request failed",
+                            error=ErrorResponse(**error_detail)).dict(),
+                        headers=headers)
 
 
 # Global exception handler for unhandled exceptions
@@ -129,6 +131,7 @@ async def root():
 @app.get("/health")
 async def health_check():
     return BaseResponse(data={"status": "healthy", "version": app.version})
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -156,13 +159,9 @@ async def startup_event():
 
 
 if __name__ == "__main__":
-    # Always serve on port 5000 as per requirements
-    port = int(os.environ.get("PORT", 5000))
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("app.main:app",
+                host="0.0.0.0",
+                port=3348,
+                reload=True,
+                log_level="info")

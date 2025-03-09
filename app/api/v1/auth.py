@@ -45,7 +45,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # Always get user from database to ensure we have a proper SQLAlchemy instance
+        # First, try to get user data from Redis
+        cached_data = await get_cached_user_data(token_data["fp"])
+        if cached_data:
+            logger.debug(f"Using cached user data for fp: {token_data['fp']}")
+            # Create a User instance from cached data
+            user_repo = UserRepository(db)
+            return await user_repo.create_user_instance_from_cache(cached_data)
+
+        # If not in cache, get from database
         user_repo = UserRepository(db)
         user = await user_repo.get_user_by_fp(token_data["fp"])
         if not user:
@@ -60,12 +68,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        # Update last_login time
-        user.last_login = func.now()
-        await db.commit()
-        await db.refresh(user)
-
-        # Cache user data for future reference
+        # Cache user data for future requests
         user_cache_data = {
             'email': user.email,
             'full_name': user.full_name,

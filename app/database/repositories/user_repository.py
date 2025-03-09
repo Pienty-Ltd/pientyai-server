@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
-from app.database.models.db_models import User
-from typing import Optional
+from app.database.models.db_models import User, UserRole
+from typing import Optional, Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -74,3 +74,32 @@ class UserRepository:
             logger.error(f"Error updating user: {str(e)}")
             await self.db.rollback()
             return None
+
+    def create_user_instance_from_cache(self, cached_data: Dict[str, Any]) -> User:
+        """
+        Redis'ten alınan kullanıcı verilerinden bir User nesnesi oluşturur.
+        Bu metod veritabanına erişmez, sadece bellekte bir User nesnesi oluşturur.
+
+        Args:
+            cached_data: Redis'ten alınan kullanıcı verileri
+
+        Returns:
+            User: Oluşturulan User nesnesi
+        """
+        try:
+            # User nesnesini cached verilerle oluştur
+            user = User(
+                id=cached_data['id'],
+                email=cached_data['email'],
+                full_name=cached_data['full_name'],
+                is_active=cached_data['is_active'],
+                fp=cached_data['fp'],
+                role=UserRole(cached_data['role'])
+            )
+
+            logger.debug(f"Created User instance from cache for user: {user.email}")
+            return user
+
+        except Exception as e:
+            logger.error(f"Error creating User instance from cache: {str(e)}")
+            raise
