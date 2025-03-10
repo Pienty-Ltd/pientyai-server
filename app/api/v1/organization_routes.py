@@ -79,28 +79,26 @@ async def create_organization(
 ):
     """Yeni organizasyon oluşturur ve kullanıcıyı otomatik olarak ekler"""
     try:
-        async with db.begin():
-            org_repo = OrganizationRepository(db)
-
-            # Create organization
-            organization = await org_repo.create_organization({
+        # Create organization with current user
+        org_repo = OrganizationRepository(db)
+        organization = await org_repo.create_organization(
+            {
                 "name": org_data.name,
                 "description": org_data.description
-            })
+            },
+            current_user
+        )
 
-            # Add user to organization
-            await org_repo.add_user_to_organization(current_user, organization)
-
-            return BaseResponse(
-                success=True,
-                data=OrganizationResponse(
-                    id=organization.id,
-                    name=organization.name,
-                    description=organization.description,
-                    created_at=organization.created_at,
-                    updated_at=organization.updated_at
-                )
+        return BaseResponse(
+            success=True,
+            data=OrganizationResponse(
+                id=organization.id,
+                name=organization.name,
+                description=organization.description,
+                created_at=organization.created_at,
+                updated_at=organization.updated_at
             )
+        )
     except Exception as e:
         logger.error(f"Error creating organization: {str(e)}")
         raise HTTPException(
