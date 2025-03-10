@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import text, delete
+from sqlalchemy.orm import selectinload
 from app.database.models.db_models import Organization, User
 import logging
 
@@ -15,7 +16,10 @@ class OrganizationRepository:
         logger.info(f"Fetching organization by id: {org_id}")
         try:
             result = await self.db.execute(
-                select(Organization).filter(Organization.id == org_id))
+                select(Organization)
+                .options(selectinload(Organization.users))  # Eager loading for users
+                .filter(Organization.id == org_id)
+            )
             org = result.scalar_one_or_none()
             if org:
                 logger.info(f"Found organization: id={org.id}, name={org.name}")
@@ -29,15 +33,15 @@ class OrganizationRepository:
     async def get_organizations_by_user(self, user_id: int):
         logger.info(f"Fetching organizations for user_id: {user_id}")
         try:
-            result = await self.db.execute(
+            stmt = (
                 select(Organization)
+                .options(selectinload(Organization.users))
                 .join(Organization.users)
                 .filter(User.id == user_id)
             )
+            result = await self.db.execute(stmt)
             organizations = result.scalars().all()
             logger.info(f"Found {len(organizations)} organizations for user {user_id}")
-            for org in organizations:
-                logger.info(f"Organization found: id={org.id}, name={org.name}")
             return organizations
         except Exception as e:
             logger.error(f"Error fetching organizations for user: {str(e)}", exc_info=True)
@@ -48,7 +52,7 @@ class OrganizationRepository:
         try:
             organization = Organization(**org_data)
             self.db.add(organization)
-            await self.db.commit()
+            await self.db.commit()  # Directly commit the organization
             await self.db.refresh(organization)
             logger.info(f"Created organization: id={organization.id}, name={organization.name}")
             return organization
@@ -60,11 +64,17 @@ class OrganizationRepository:
     async def add_user_to_organization(self, user: User, organization: Organization):
         logger.info(f"Adding user {user.id} to organization {organization.id}")
         try:
-            organization.users.append(user)
+            # Get fresh organization instance with users loaded
+            org = await self.get_organization_by_id(organization.id)
+            if not org:
+                raise Exception(f"Organization {organization.id} not found")
+
+            # Add user to organization
+            org.users.append(user)
             await self.db.commit()
-            await self.db.refresh(organization)
+            await self.db.refresh(org)
             logger.info(f"Successfully added user {user.id} to organization {organization.id}")
-            return organization
+            return org
         except Exception as e:
             logger.error(f"Error adding user to organization: {str(e)}", exc_info=True)
             await self.db.rollback()

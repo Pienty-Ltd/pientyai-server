@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.database.database_factory import get_db
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
-from app.database.models.db_models import User, Organization, UserRole, File, KnowledgeBase #Added File and KnowledgeBase back
+from app.database.models.db_models import User, Organization, UserRole, File, KnowledgeBase
 from app.database.repositories.organization_repository import OrganizationRepository
 
 router = APIRouter(
@@ -26,10 +26,19 @@ class OrganizationResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
 
+class FileResponse(BaseModel):
+    id: int
+    filename: str
+    file_type: str
+    status: str
+    created_at: datetime
+    chunks_count: int
+
 class OrganizationDetail(OrganizationResponse):
     total_files: int
     total_processed_files: int
     last_activity: Optional[datetime]
+    files: List[FileResponse] = []
 
 @router.get("", response_model=BaseResponse[List[OrganizationResponse]])
 async def list_organizations(
@@ -40,7 +49,7 @@ async def list_organizations(
     try:
         org_repo = OrganizationRepository(db)
         organizations = await org_repo.get_organizations_by_user(current_user.id)
-        
+
         return BaseResponse(
             success=True,
             data=[
@@ -68,16 +77,16 @@ async def create_organization(
     """Yeni organizasyon oluşturur ve kullanıcıyı otomatik olarak ekler"""
     try:
         org_repo = OrganizationRepository(db)
-        
+
         # Organizasyonu oluştur
         organization = await org_repo.create_organization({
             "name": org_data.name,
             "description": org_data.description
         })
-        
+
         # Kullanıcıyı organizasyona ekle
         await org_repo.add_user_to_organization(current_user, organization)
-        
+
         return BaseResponse(
             success=True,
             data=OrganizationResponse(
@@ -100,17 +109,17 @@ async def get_organization_details(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Organizasyon detaylarını ve istatistiklerini getirir"""
+    """Organizasyon detaylarını, istatistiklerini ve dosyalarını getirir"""
     try:
         org_repo = OrganizationRepository(db)
         organization = await org_repo.get_organization_by_id(org_id)
-        
+
         if not organization:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Organization not found"
             )
-            
+
         # Kullanıcının bu organizasyona erişimi var mı kontrol et
         user_orgs = await org_repo.get_organizations_by_user(current_user.id)
         if organization not in user_orgs:
@@ -118,7 +127,7 @@ async def get_organization_details(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this organization"
             )
-            
+
         # Organizasyonun dosya istatistiklerini hesapla
         total_files = len(organization.files)
         total_processed = sum(1 for f in organization.files if any(kb for kb in f.knowledge_base))
@@ -126,7 +135,19 @@ async def get_organization_details(
             (f.updated_at for f in organization.files),
             default=None
         ) if organization.files else None
-        
+
+        # Dosya listesini hazırla
+        files = [
+            FileResponse(
+                id=f.id,
+                filename=f.filename,
+                file_type=f.file_type,
+                status=f.status.value,
+                created_at=f.created_at,
+                chunks_count=len(f.knowledge_base)
+            ) for f in organization.files
+        ]
+
         return BaseResponse(
             success=True,
             data=OrganizationDetail(
@@ -137,7 +158,8 @@ async def get_organization_details(
                 updated_at=organization.updated_at,
                 total_files=total_files,
                 total_processed_files=total_processed,
-                last_activity=last_activity
+                last_activity=last_activity,
+                files=files
             )
         )
     except HTTPException as e:
@@ -162,18 +184,18 @@ async def delete_organization(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only admin users can delete organizations"
             )
-            
+
         org_repo = OrganizationRepository(db)
         organization = await org_repo.get_organization_by_id(org_id)
-        
+
         if not organization:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Organization not found"
             )
-            
+
         await org_repo.delete_organization(org_id)
-        
+
         return BaseResponse(
             success=True,
             message="Organization deleted successfully"
