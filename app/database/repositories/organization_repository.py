@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import text
+from sqlalchemy import text, delete
 from app.database.models.db_models import Organization, User
 import logging
 
@@ -67,5 +67,26 @@ class OrganizationRepository:
             return organization
         except Exception as e:
             logger.error(f"Error adding user to organization: {str(e)}", exc_info=True)
+            await self.db.rollback()
+            raise
+
+    async def delete_organization(self, org_id: int):
+        logger.info(f"Deleting organization with id: {org_id}")
+        try:
+            # Önce organizasyonu getir
+            organization = await self.get_organization_by_id(org_id)
+            if not organization:
+                logger.warning(f"Organization not found with id: {org_id}")
+                return False
+
+            # Organizasyonu sil
+            await self.db.execute(
+                delete(Organization).where(Organization.id == org_id)
+            )
+            await self.db.commit()
+            logger.info(f"Successfully deleted organization with id: {org_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting organization: {str(e)}", exc_info=True)
             await self.db.rollback()
             raise
