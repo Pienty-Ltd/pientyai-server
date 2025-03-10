@@ -75,7 +75,7 @@ class UserRepository:
             await self.db.rollback()
             return None
 
-    def create_user_instance_from_cache(self, cached_data: Dict[str, Any]) -> User:
+    async def create_user_instance_from_cache(self, cached_data: Dict[str, Any]) -> User:
         """
         Redis'ten alınan kullanıcı verilerinden bir User nesnesi oluşturur.
         Bu metod veritabanına erişmez, sadece bellekte bir User nesnesi oluşturur.

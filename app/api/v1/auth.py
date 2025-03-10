@@ -29,7 +29,7 @@ router = APIRouter(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
-                         db: AsyncSession = Depends(get_db)):
+                          db: AsyncSession = Depends(get_db)):
     """Get current authenticated user"""
     try:
         token_data = decode_access_token(token)
@@ -74,7 +74,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
             'full_name': user.full_name,
             'is_active': user.is_active,
             'fp': user.fp,
-            'role': user.role.value if user.role else UserRole.USER.value,
+            'role': user.role.value,
             'id': user.id
         }
         await cache_user_data(user_cache_data)
