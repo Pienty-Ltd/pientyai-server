@@ -24,35 +24,50 @@ class OrganizationRepository:
             logger.error(f"Error fetching organization by id: {str(e)}")
             raise
 
+    async def get_organizations_by_user(self, user_id: int):
+        """Get all organizations for a user"""
+        try:
+            result = await self.db.execute(
+                select(Organization)
+                .join(Organization.users)
+                .filter(User.id == user_id)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"Error fetching organizations for user: {str(e)}")
+            raise
+
     async def create_organization(self, org_data: dict, user: User = None):
         """Create organization and add a user to it"""
         try:
             # Create organization
             organization = Organization(**org_data)
             self.db.add(organization)
-            # Flush to get the ID and create the organization
-            await self.db.flush()
 
             # If user is provided, add to organization
             if user:
-                # Create the association
-                await self.db.execute(
-                    text(
-                        "INSERT INTO user_organizations (user_id, organization_id) VALUES (:user_id, :org_id)"
-                    ),
-                    {"user_id": user.id, "org_id": organization.id}
-                )
+                organization.users.append(user)
 
             # Commit the transaction
             await self.db.commit()
-
-            # Refresh organization with users loaded
-            await self.db.refresh(organization, ['users'])
+            await self.db.refresh(organization)
 
             logger.info(f"Created organization: {organization.name}")
             return organization
 
         except Exception as e:
             logger.error(f"Error creating organization: {str(e)}")
+            await self.db.rollback()
+            raise
+
+    async def delete_organization(self, org_id: int):
+        """Delete an organization"""
+        try:
+            await self.db.execute(
+                delete(Organization).where(Organization.id == org_id)
+            )
+            await self.db.commit()
+        except Exception as e:
+            logger.error(f"Error deleting organization: {str(e)}")
             await self.db.rollback()
             raise

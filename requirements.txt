@@ -67,3 +67,5 @@ python-jose[cryptography]
 python-multipart
 flask-login
 flask-wtf
+flask-login
+flask-wtf
