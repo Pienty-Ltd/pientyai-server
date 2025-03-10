@@ -3,6 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database.database_factory import get_db
 from app.api.v1.auth import get_current_user
@@ -76,28 +79,30 @@ async def create_organization(
 ):
     """Yeni organizasyon oluşturur ve kullanıcıyı otomatik olarak ekler"""
     try:
-        org_repo = OrganizationRepository(db)
+        async with db.begin():
+            org_repo = OrganizationRepository(db)
 
-        # Organizasyonu oluştur
-        organization = await org_repo.create_organization({
-            "name": org_data.name,
-            "description": org_data.description
-        })
+            # Create organization
+            organization = await org_repo.create_organization({
+                "name": org_data.name,
+                "description": org_data.description
+            })
 
-        # Kullanıcıyı organizasyona ekle
-        await org_repo.add_user_to_organization(current_user, organization)
+            # Add user to organization
+            await org_repo.add_user_to_organization(current_user, organization)
 
-        return BaseResponse(
-            success=True,
-            data=OrganizationResponse(
-                id=organization.id,
-                name=organization.name,
-                description=organization.description,
-                created_at=organization.created_at,
-                updated_at=organization.updated_at
+            return BaseResponse(
+                success=True,
+                data=OrganizationResponse(
+                    id=organization.id,
+                    name=organization.name,
+                    description=organization.description,
+                    created_at=organization.created_at,
+                    updated_at=organization.updated_at
+                )
             )
-        )
     except Exception as e:
+        logger.error(f"Error creating organization: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

@@ -8,7 +8,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 class OrganizationRepository:
-
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -48,48 +47,31 @@ class OrganizationRepository:
             raise
 
     async def create_organization(self, org_data: dict):
-        logger.info(f"Creating new organization with data: {org_data}")
+        """Create a new organization"""
         try:
             organization = Organization(**org_data)
             self.db.add(organization)
-            await self.db.commit()  # Directly commit the organization
-            await self.db.refresh(organization)
-            logger.info(f"Created organization: id={organization.id}, name={organization.name}")
+            await self.db.flush()  # Get the ID without committing
             return organization
         except Exception as e:
             logger.error(f"Error creating organization: {str(e)}", exc_info=True)
-            await self.db.rollback()
             raise
 
     async def add_user_to_organization(self, user: User, organization: Organization):
-        logger.info(f"Adding user {user.id} to organization {organization.id}")
+        """Add a user to an organization"""
         try:
-            # Get fresh organization instance with users loaded
-            org = await self.get_organization_by_id(organization.id)
-            if not org:
-                raise Exception(f"Organization {organization.id} not found")
-
-            # Add user to organization
-            org.users.append(user)
+            # Add user directly without refreshing or fetching
+            organization.users.append(user)
             await self.db.commit()
-            await self.db.refresh(org)
             logger.info(f"Successfully added user {user.id} to organization {organization.id}")
-            return org
+            return organization
         except Exception as e:
             logger.error(f"Error adding user to organization: {str(e)}", exc_info=True)
-            await self.db.rollback()
             raise
 
     async def delete_organization(self, org_id: int):
-        logger.info(f"Deleting organization with id: {org_id}")
+        """Delete an organization"""
         try:
-            # Önce organizasyonu getir
-            organization = await self.get_organization_by_id(org_id)
-            if not organization:
-                logger.warning(f"Organization not found with id: {org_id}")
-                return False
-
-            # Organizasyonu sil
             await self.db.execute(
                 delete(Organization).where(Organization.id == org_id)
             )
@@ -98,5 +80,4 @@ class OrganizationRepository:
             return True
         except Exception as e:
             logger.error(f"Error deleting organization: {str(e)}", exc_info=True)
-            await self.db.rollback()
             raise

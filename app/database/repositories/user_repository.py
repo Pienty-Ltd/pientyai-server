@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from app.database.models.db_models import User, UserRole
+from app.core.security import get_password_hash
 from typing import Optional, Dict, Any
 import logging
 
@@ -43,6 +44,14 @@ class UserRepository:
                 logger.warning(f"Attempted to create user with existing email: {user_data['email']}")
                 return None
 
+            # Make sure hashed_password is provided and not None
+            if "password" in user_data:
+                user_data["hashed_password"] = get_password_hash(user_data["password"])
+                del user_data["password"]
+            elif "hashed_password" not in user_data or user_data["hashed_password"] is None:
+                logger.error("Cannot create user without password")
+                return None
+
             user = User(**user_data)
             self.db.add(user)
             await self.db.commit()  # This will create a new transaction
@@ -63,6 +72,11 @@ class UserRepository:
         try:
             user = await self.get_user_by_fp(user_fp)
             if user:
+                # If updating password, hash it first
+                if "password" in updates:
+                    updates["hashed_password"] = get_password_hash(updates["password"])
+                    del updates["password"]
+
                 for key, value in updates.items():
                     setattr(user, key, value)
                 await self.db.commit()
@@ -79,12 +93,6 @@ class UserRepository:
         """
         Redis'ten alınan kullanıcı verilerinden bir User nesnesi oluşturur.
         Bu metod veritabanına erişmez, sadece bellekte bir User nesnesi oluşturur.
-
-        Args:
-            cached_data: Redis'ten alınan kullanıcı verileri
-
-        Returns:
-            User: Oluşturulan User nesnesi
         """
         try:
             # User nesnesini cached verilerle oluştur

@@ -54,7 +54,8 @@ class User(Base):
     organizations = relationship(
         "Organization",
         secondary=user_organizations,
-        back_populates="users"
+        back_populates="users",
+        lazy="selectin"  
     )
 
     subscription = relationship("UserSubscription", back_populates="user", uselist=False)
@@ -74,7 +75,8 @@ class Organization(Base):
     users = relationship(
         "User",
         secondary=user_organizations,
-        back_populates="organizations"
+        back_populates="organizations",
+        lazy="selectin"  
     )
     files = relationship("File", back_populates="organization")
     knowledge_base = relationship("KnowledgeBase", back_populates="organization")

@@ -29,7 +29,7 @@ router = APIRouter(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme),
-                          db: AsyncSession = Depends(get_db)):
+                       db: AsyncSession = Depends(get_db)):
     """Get current authenticated user"""
     try:
         token_data = decode_access_token(token)
@@ -49,9 +49,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme),
         cached_data = await get_cached_user_data(token_data["fp"])
         if cached_data:
             logger.debug(f"Using cached user data for fp: {token_data['fp']}")
-            # Create a User instance from cached data
+            # Get the complete user from database using fp
             user_repo = UserRepository(db)
-            return await user_repo.create_user_instance_from_cache(cached_data)
+            user = await user_repo.get_user_by_fp(token_data["fp"])
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "message": "User not found",
+                        "logout": True,
+                        "details": [{"msg": "User not found"}]
+                    }
+                )
+            return user
 
         # If not in cache, get from database
         user_repo = UserRepository(db)
