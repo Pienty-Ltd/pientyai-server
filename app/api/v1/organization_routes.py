@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -43,29 +44,52 @@ class OrganizationDetail(OrganizationResponse):
     last_activity: Optional[datetime]
     files: List[FileResponse] = []
 
-@router.get("", response_model=BaseResponse[List[OrganizationResponse]])
+class PaginatedOrganizationResponse(BaseModel):
+    organizations: List[OrganizationResponse]
+    total_count: int
+    total_pages: int
+    current_page: int
+    per_page: int
+
+@router.get("", response_model=BaseResponse[PaginatedOrganizationResponse])
 async def list_organizations(
+    page: int = Query(1, gt=0, description="Page number, starting from 1"),
+    per_page: int = Query(20, gt=0, le=100, description="Items per page, max 100"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Kullanıcının erişimi olan organizasyonları listeler"""
+    """Kullanıcının erişimi olan organizasyonları sayfalı olarak listeler"""
     try:
         org_repo = OrganizationRepository(db)
-        organizations = await org_repo.get_organizations_by_user(current_user.id)
+        organizations, total_count = await org_repo.get_organizations_by_user(
+            current_user.id,
+            page=page,
+            per_page=per_page
+        )
+
+        # Calculate total pages
+        total_pages = math.ceil(total_count / per_page)
 
         return BaseResponse(
             success=True,
-            data=[
-                OrganizationResponse(
-                    id=org.id,
-                    name=org.name,
-                    description=org.description,
-                    created_at=org.created_at,
-                    updated_at=org.updated_at
-                ) for org in organizations
-            ]
+            data=PaginatedOrganizationResponse(
+                organizations=[
+                    OrganizationResponse(
+                        id=org.id,
+                        name=org.name,
+                        description=org.description,
+                        created_at=org.created_at,
+                        updated_at=org.updated_at
+                    ) for org in organizations
+                ],
+                total_count=total_count,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page
+            )
         )
     except Exception as e:
+        logger.error(f"Error listing organizations: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

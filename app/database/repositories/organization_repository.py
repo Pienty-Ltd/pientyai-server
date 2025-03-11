@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import text, delete, desc
+from sqlalchemy import text, delete, desc, func
 from sqlalchemy.orm import selectinload
 from app.database.models.db_models import Organization, User, File
 import logging
@@ -47,15 +47,35 @@ class OrganizationRepository:
             logger.error(f"Error fetching organization files: {str(e)}")
             raise
 
-    async def get_organizations_by_user(self, user_id: int):
-        """Get all organizations for a user"""
+    async def get_organizations_by_user(self, user_id: int, page: int = 1, per_page: int = 20):
+        """Get paginated organizations for a user"""
         try:
-            result = await self.db.execute(
-                select(Organization)
+            # Calculate offset
+            offset = (page - 1) * per_page
+
+            # Get total count
+            count_stmt = (
+                select(func.count(Organization.id))
                 .join(Organization.users)
                 .filter(User.id == user_id)
             )
-            return result.scalars().all()
+            total_count = await self.db.execute(count_stmt)
+            total = total_count.scalar()
+
+            # Get paginated organizations
+            stmt = (
+                select(Organization)
+                .join(Organization.users)
+                .filter(User.id == user_id)
+                .order_by(Organization.created_at.desc())
+                .offset(offset)
+                .limit(per_page)
+            )
+            result = await self.db.execute(stmt)
+            organizations = result.scalars().all()
+
+            return organizations, total
+
         except Exception as e:
             logger.error(f"Error fetching organizations for user: {str(e)}")
             raise
