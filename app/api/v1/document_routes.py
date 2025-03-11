@@ -1,17 +1,105 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query, BackgroundTasks
-from typing import List
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query, BackgroundTasks, Request
+from typing import List, Optional
 import logging
+from datetime import datetime
+import mimetypes
 from app.core.services.document_service import DocumentService
 from app.database.models import User, Organization
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
 from app.schemas.document import DocumentResponse, KnowledgeBaseResponse, PaginatedDocumentResponse
 from app.database.models.db_models import FileStatus
+from app.api.v1.middlewares.validation_middleware import (
+    validate_pagination_parameters,
+    validate_document_id,
+    validate_organization_id
+)
 import math
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
+
+# Enhance ALLOWED_MIMETYPES with additional validation
+ALLOWED_MIMETYPES = {
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/msword': 'doc'
+}
+
+# Mapping of file extensions to expected MIME types
+EXTENSION_MIME_MAP = {
+    'pdf': 'application/pdf',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'doc': 'application/msword'
+}
+
+async def validate_file_upload(file: UploadFile) -> str:
+    """
+    Validate uploaded file type and content
+    Returns the validated file extension
+    """
+    try:
+        # Check file size (10MB limit)
+        content = await file.read()
+        if len(content) > 10 * 1024 * 1024:  # 10MB
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File size exceeds 10MB limit"
+            )
+
+        # Reset file position for later reading
+        await file.seek(0)
+
+        # Basic filename validation
+        if not file.filename or '.' not in file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid filename"
+            )
+
+        # Extract and validate file extension
+        file_ext = file.filename.split('.')[-1].lower()
+        if file_ext not in EXTENSION_MIME_MAP:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type. Allowed types: {', '.join(ALLOWED_MIMETYPES.values())}"
+            )
+
+        # Check content type
+        content_type = file.content_type
+        if content_type not in ALLOWED_MIMETYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid content type. Expected types: {', '.join(ALLOWED_MIMETYPES.keys())}"
+            )
+
+        # Validate file extension matches content type
+        expected_ext = ALLOWED_MIMETYPES[content_type]
+        if file_ext != expected_ext:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File extension '{file_ext}' doesn't match content type. Expected: {expected_ext}"
+            )
+
+        # Additional validation: ensure the detected MIME type matches the extension
+        expected_mime = EXTENSION_MIME_MAP[file_ext]
+        if content_type != expected_mime:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Content type mismatch. Got: {content_type}, Expected: {expected_mime}"
+            )
+
+        return file_ext
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during file validation: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file format or corrupted file"
+        )
 
 async def process_document_background(
     file_content: bytes,
@@ -23,6 +111,9 @@ async def process_document_background(
 ):
     """Background task for processing document after upload"""
     try:
+        logger.info(f"Starting background processing for document {filename} (ID: {db_file_id})")
+        start_time = datetime.now()
+
         document_service = DocumentService()
         await document_service.process_document_async(
             file_content=file_content,
@@ -32,20 +123,30 @@ async def process_document_background(
             organization_id=organization_id,
             db_file_id=db_file_id
         )
+
+        processing_duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Completed background processing for document {filename} (Duration: {processing_duration}s)")
     except Exception as e:
-        logger.error(f"Background document processing failed: {str(e)}")
+        logger.error(f"Background document processing failed: {str(e)}", exc_info=True)
         # Update file status to failed in case of error
         document_service = DocumentService()
         await document_service.update_file_status(db_file_id, FileStatus.FAILED)
 
 @router.get("", response_model=BaseResponse[PaginatedDocumentResponse])
 async def list_user_documents(
+    request: Request,
     page: int = Query(1, gt=0, description="Page number"),
-    per_page: int = Query(20, gt=0, le=100, description="Items per page"),
+    per_page: int = Query(20, gt=0, le=100, description="Items per page, max 100"),
     current_user: User = Depends(get_current_user)
 ):
     """List all documents accessible to the current user across their organizations"""
     try:
+        # Validate pagination parameters
+        page, per_page = await validate_pagination_parameters(request, page, per_page)
+
+        logger.info(f"Fetching documents for user {current_user.id}, page {page}, per_page {per_page}")
+        start_time = datetime.now()
+
         document_service = DocumentService()
         documents, total_count = await document_service.get_user_accessible_documents(
             user_id=current_user.id,
@@ -54,6 +155,8 @@ async def list_user_documents(
         )
 
         total_pages = math.ceil(total_count / per_page)
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Retrieved {len(documents)} documents (Total: {total_count}, Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -76,24 +179,39 @@ async def list_user_documents(
                 per_page=per_page
             )
         )
+    except ValueError as ve:
+        logger.error(f"Validation error in list_user_documents: {str(ve)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
     except Exception as e:
-        logger.error(f"Error listing user documents: {str(e)}")
+        logger.error(f"Error listing user documents: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="An error occurred while fetching documents"
         )
 
 @router.get("/organization/{org_id}", response_model=BaseResponse[PaginatedDocumentResponse])
 async def list_organization_documents(
+    request: Request,
     org_id: int,
     page: int = Query(1, gt=0, description="Page number"),
-    per_page: int = Query(20, gt=0, le=100, description="Items per page"),
+    per_page: int = Query(20, gt=0, le=100, description="Items per page, max 100"),
     current_user: User = Depends(get_current_user)
 ):
     """List all documents for a specific organization with pagination"""
     try:
+        # Validate parameters
+        org_id = await validate_organization_id(org_id)
+        page, per_page = await validate_pagination_parameters(request, page, per_page)
+
+        logger.info(f"Fetching documents for organization {org_id}, page {page}, per_page {per_page}")
+        start_time = datetime.now()
+
         # Check if user has access to organization
         if not any(org.id == org_id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -107,6 +225,8 @@ async def list_organization_documents(
         )
 
         total_pages = math.ceil(total_count / per_page)
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Retrieved {len(documents)} documents for org {org_id} (Total: {total_count}, Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -133,10 +253,10 @@ async def list_organization_documents(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error listing organization documents: {str(e)}")
+        logger.error(f"Error listing organization documents: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="An error occurred while fetching organization documents"
         )
 
 @router.get("/organization/{org_id}/{document_id}", response_model=BaseResponse[DocumentResponse])
@@ -147,8 +267,12 @@ async def get_document(
 ):
     """Get a specific document by ID"""
     try:
+        logger.info(f"Fetching document {document_id} from organization {org_id}")
+        start_time = datetime.now()
+
         # Check if user has access to organization
         if not any(org.id == org_id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_id} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -158,10 +282,14 @@ async def get_document(
         document = await document_service.get_document_by_id(org_id, document_id)
 
         if not document:
+            logger.warning(f"Document not found: ID {document_id} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
+
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Retrieved document {document_id} (Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -180,10 +308,10 @@ async def get_document(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error fetching document: {str(e)}")
+        logger.error(f"Error fetching document: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="An error occurred while fetching the document"
         )
 
 @router.delete("/organization/{org_id}/{document_id}", response_model=BaseResponse)
@@ -194,8 +322,12 @@ async def delete_document(
 ):
     """Delete a document and its associated knowledge base entries"""
     try:
+        logger.info(f"Attempting to delete document {document_id} from organization {org_id}")
+        start_time = datetime.now()
+
         # Check if user has access to organization
         if not any(org.id == org_id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to delete document {document_id} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -205,10 +337,14 @@ async def delete_document(
         success = await document_service.delete_document(org_id, document_id)
 
         if not success:
+            logger.warning(f"Document not found for deletion: ID {document_id} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
+
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Deleted document {document_id} successfully (Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -218,10 +354,10 @@ async def delete_document(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error deleting document: {str(e)}")
+        logger.error(f"Error deleting document: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="An error occurred while deleting the document"
         )
 
 @router.post("/upload", response_model=BaseResponse[DocumentResponse])
@@ -233,17 +369,25 @@ async def upload_document(
 ):
     """Upload and process a document for knowledge base"""
     try:
-        # Validate file type
-        allowed_types = ["pdf", "docx", "doc"]
-        file_type = file.filename.split(".")[-1].lower()
-        if file_type not in allowed_types:
+        logger.info(f"Processing upload request for file {file.filename} to organization {organization_id}")
+        start_time = datetime.now()
+
+        # Enhanced file validation
+        try:
+            file_type = await validate_file_upload(file)
+        except HTTPException as e:
+            logger.warning(f"File validation failed: {str(e.detail)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during file validation: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported file type. Allowed types: {', '.join(allowed_types)}"
+                detail="Invalid file format or corrupted file"
             )
 
         # Check if user has access to organization
         if not any(org.id == organization_id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to upload to org {organization_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -272,6 +416,9 @@ async def upload_document(
             db_file_id=db_file.id
         )
 
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Document upload initiated for {file.filename} (Duration: {duration}s)")
+
         return BaseResponse(
             success=True,
             message="Document upload started. Processing in background.",
@@ -287,11 +434,13 @@ async def upload_document(
             )
         )
 
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        logger.error(f"Error uploading document: {str(e)}")
+        logger.error(f"Error uploading document: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="An error occurred while uploading the document"
         )
 
 @router.get("/search/{organization_id}", response_model=BaseResponse[List[KnowledgeBaseResponse]])
@@ -305,8 +454,12 @@ async def search_documents(
     Search through organization's documents using semantic search
     """
     try:
+        logger.info(f"Searching documents in organization {organization_id} with query '{query}', limit {limit}")
+        start_time = datetime.now()
+
         # Check if user has access to organization
         if not any(org.id == organization_id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to search in org {organization_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -318,6 +471,9 @@ async def search_documents(
             query=query,
             limit=limit
         )
+
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Search completed (Duration: {duration}s), {len(results)} results found.")
 
         return BaseResponse(
             success=True,
@@ -334,8 +490,8 @@ async def search_documents(
         )
 
     except Exception as e:
-        logger.error(f"Error searching documents: {str(e)}")
+        logger.error(f"Error searching documents: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error searching documents"
+            detail="An error occurred while searching documents"
         )

@@ -14,6 +14,7 @@ from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy import delete, select, func
 import math
+from datetime import datetime
 
 from app.database.database_factory import async_session_maker
 
@@ -101,26 +102,32 @@ class DocumentService:
         - Save to knowledge base
         """
         try:
+            logger.info(f"Starting document processing for file: {filename} (ID: {db_file_id})")
+
             # Upload to S3
             try:
                 from io import BytesIO
                 file_obj = BytesIO(file_content)
                 s3_key = f"documents/{organization_id}/{filename}"
 
+                start_time = datetime.now()
                 self.s3_client.upload_fileobj(
                     file_obj,
                     self.bucket_name,
                     s3_key
                 )
-                logger.info(f"File uploaded to S3: {s3_key}")
+                upload_duration = (datetime.now() - start_time).total_seconds()
+                logger.info(f"File uploaded to S3: {s3_key} (Duration: {upload_duration}s)")
             except Exception as e:
-                logger.error(f"Error uploading file to S3: {str(e)}")
+                logger.error(f"Error uploading file to S3: {str(e)}, File: {filename}")
                 await self.update_file_status(db_file_id, FileStatus.FAILED)
                 raise
 
             # Extract text content and split into chunks
+            start_time = datetime.now()
             text_chunks = await self._extract_text_chunks(BytesIO(file_content), file_type)
-            logger.info(f"Extracted {len(text_chunks)} chunks from document")
+            extraction_duration = (datetime.now() - start_time).total_seconds()
+            logger.info(f"Extracted {len(text_chunks)} chunks from document (Duration: {extraction_duration}s)")
 
             # Process chunks in batches
             chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
@@ -137,12 +144,16 @@ class DocumentService:
                 if db_file:
                     db_file.chunk_count = total_chunks
                     await session.commit()
+                    logger.info(f"Updated chunk count for file {db_file_id}: {total_chunks} chunks")
 
+                processing_start = datetime.now()
                 for batch_idx, chunk_batch in enumerate(chunk_batches):
                     try:
+                        batch_start = datetime.now()
                         # Generate embeddings for the batch
                         embeddings = await self.openai_service.create_embeddings(chunk_batch)
-                        logger.info(f"Generated embeddings for batch {batch_idx + 1}/{len(chunk_batches)}")
+                        embedding_duration = (datetime.now() - batch_start).total_seconds()
+                        logger.info(f"Generated embeddings for batch {batch_idx + 1}/{len(chunk_batches)} (Duration: {embedding_duration}s)")
 
                         # Create knowledge base entries for the batch
                         batch_entries = []
@@ -166,19 +177,22 @@ class DocumentService:
                         # Bulk insert the batch
                         session.add_all(batch_entries)
                         await session.commit()
-                        logger.info(f"Saved batch {batch_idx + 1} to database")
+                        logger.info(f"Saved batch {batch_idx + 1}/{len(chunk_batches)} to database")
 
                     except Exception as e:
                         logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
                         # Continue with next batch despite errors
                         continue
 
+                total_processing_duration = (datetime.now() - processing_start).total_seconds()
+                logger.info(f"Total processing time for {total_chunks} chunks: {total_processing_duration}s")
+
             # Update file status to completed
             await self.update_file_status(db_file_id, FileStatus.COMPLETED)
-            logger.info(f"Completed processing document {filename}")
+            logger.info(f"Completed processing document {filename} (ID: {db_file_id})")
 
         except Exception as e:
-            logger.error(f"Error in async document processing: {str(e)}")
+            logger.error(f"Error in async document processing: {str(e)}", exc_info=True)
             await self.update_file_status(db_file_id, FileStatus.FAILED)
             raise
 
@@ -303,13 +317,21 @@ class DocumentService:
         Search through documents using semantic search with embeddings
         """
         try:
+            logger.info(f"Starting semantic search for org {organization_id}. Query: '{query}'")
+            start_time = datetime.now()
+
             # Generate embedding for search query
             query_embedding = await self.openai_service.create_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
+
+            embedding_duration = (datetime.now() - start_time).total_seconds()
+            logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
 
             async with async_session_maker() as session:
                 # Using pgvector's L2 distance to find similar chunks
+                search_start = datetime.now()
                 stmt = select(KnowledgeBase).where(
                     KnowledgeBase.organization_id == organization_id
                 ).order_by(
@@ -319,11 +341,19 @@ class DocumentService:
                 result = await session.execute(stmt)
                 chunks = result.scalars().all()
 
-                logger.info(f"Found {len(chunks)} relevant chunks for query: {query}")
+                search_duration = (datetime.now() - search_start).total_seconds()
+                logger.info(f"Found {len(chunks)} relevant chunks for query (Search duration: {search_duration}s)")
+
+                # Log similarity scores for debugging
+                if chunks:
+                    for chunk in chunks:
+                        similarity = 1 - func.l2_distance(chunk.embedding, query_embedding[0])
+                        logger.debug(f"Chunk {chunk.id} similarity score: {similarity}")
+
                 return chunks
 
         except Exception as e:
-            logger.error(f"Error searching documents: {str(e)}")
+            logger.error(f"Error searching documents: {str(e)}", exc_info=True)
             raise
 
     async def get_user_accessible_documents(

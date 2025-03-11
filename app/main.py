@@ -17,6 +17,7 @@ from app.api.v1 import router as v1_router
 from app.core.config import config
 from app.database.database_factory import create_tables, get_db
 from app.schemas.base import BaseResponse, ErrorResponse
+from app.api.v1.middlewares.request_logging_middleware import log_request_middleware
 
 project_name = "Pienty.AI"
 
@@ -42,6 +43,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+app.middleware("http")(log_request_middleware)
 
 # Include routers
 app.include_router(auth_router)
@@ -164,6 +168,6 @@ if __name__ == "__main__":
     uvicorn.run("app.main:app",
                 host="0.0.0.0",
                 port=3348,
-    
+
                 reload=True,
-                log_level="ifo")
+                log_level="info")
