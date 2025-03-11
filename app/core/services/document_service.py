@@ -144,8 +144,6 @@ class DocumentService:
                            for i in range(0, len(text_chunks), self.BATCH_SIZE)]
 
             total_chunks = len(text_chunks)
-            knowledge_base_entries = []
-
             processing_start = datetime.now()
             logger.info(f"Starting document processing with {total_chunks} total chunks")
 
@@ -154,7 +152,7 @@ class DocumentService:
                     try:
                         batch_start = datetime.now()
 
-                        # Embeddings oluşturma ve oluşturulan embeddingler ile knowledge base kayıtlarını yapma
+                        # Generate embeddings and create knowledge base entries
                         try:
                             embeddings = await self.openai_service.create_embeddings(chunk_batch)
 
@@ -176,7 +174,6 @@ class DocumentService:
                                     organization_id=organization_id
                                 )
                                 batch_entries.append(kb_entry)
-                                knowledge_base_entries.append(kb_entry)
 
                             # Bulk insert the batch
                             session.add_all(batch_entries)
@@ -187,29 +184,33 @@ class DocumentService:
 
                         except Exception as e:
                             logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
-                            # Continue with next batch despite errors
                             continue
 
                     except Exception as e:
                         logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
-                        # Continue with next batch despite errors
                         continue
 
-                # Update chunk count before setting status to completed
+                # Update chunk count using SQL COUNT before setting status to completed
                 try:
-                    stmt = select(File).where(File.id == db_file_id)
-                    result = await session.execute(stmt)
+                    from sqlalchemy import func, select
+                    count_stmt = select(func.count()).select_from(KnowledgeBase).where(KnowledgeBase.file_id == db_file_id)
+                    result = await session.execute(count_stmt)
+                    actual_chunk_count = result.scalar()
+
+                    logger.info(f"Counted {actual_chunk_count} chunks in knowledge base for file {db_file_id}")
+
+                    # Update File record with the actual chunk count
+                    update_stmt = select(File).where(File.id == db_file_id)
+                    result = await session.execute(update_stmt)
                     db_file = result.scalar_one_or_none()
 
                     if db_file:
-                        # Directly use total_chunks instead of counting from knowledge_base
-                        logger.info(f"Updating chunk count for file {db_file_id} from {db_file.chunk_count} to {total_chunks}")
-                        db_file.chunk_count = total_chunks
+                        db_file.chunk_count = actual_chunk_count
                         await session.commit()
-                        logger.info(f"Successfully updated chunk count for file {db_file_id}: {total_chunks} chunks")
+                        logger.info(f"Successfully updated chunk count for file {db_file_id} to {actual_chunk_count}")
                 except Exception as e:
                     logger.error(f"Error updating chunk count: {str(e)}")
-                    raise  # Add raise to ensure we don't proceed to COMPLETED status if chunk count update fails
+                    raise
 
             # Update file status to completed only after chunk count is updated
             await self.update_file_status(db_file_id, FileStatus.COMPLETED)

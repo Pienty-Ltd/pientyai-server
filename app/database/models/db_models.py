@@ -93,6 +93,7 @@ class File(Base):
     s3_key = Column(String, unique=True, nullable=False)
     status = Column(Enum(FileStatus), nullable=False, default=FileStatus.PENDING)
     file_size = Column(Integer)  # Size in bytes
+    chunk_count = Column(Integer, default=0)  # Add chunk_count column with default 0
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
