@@ -54,11 +54,12 @@ class DashboardStatsRepository:
             # Try to get stats from materialized view
             try:
                 logger.debug("Querying materialized view...")
-                result = await self.db.execute(text("""
-                    SELECT * FROM mv_user_stats WHERE user_id = :user_id
-                """), {"user_id": user_id})
-                row = result.fetchone()
-                logger.debug(f"Materialized view query result: {row}")
+                async with self.db.begin() as transaction:
+                    result = await transaction.execute(text("""
+                        SELECT * FROM mv_user_stats WHERE user_id = :user_id
+                    """), {"user_id": user_id})
+                    row = result.fetchone()
+                    logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
                 return None
@@ -105,11 +106,12 @@ class DashboardStatsRepository:
             # Try to get stats from materialized view first
             try:
                 logger.debug("Querying materialized view...")
-                result = await self.db.execute(text("""
-                    SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
-                """), {"organization_id": organization_id})
-                row = result.fetchone()
-                logger.debug(f"Materialized view query result: {row}")
+                async with self.db.begin() as transaction:
+                    result = await transaction.execute(text("""
+                        SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
+                    """), {"organization_id": organization_id})
+                    row = result.fetchone()
+                    logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
                 row = None
@@ -117,19 +119,17 @@ class DashboardStatsRepository:
             if not row:
                 logger.info("No data in materialized view, updating stats...")
                 try:
-                    # Update stats for this organization
-                    await self.db.execute(text("""
-                        SELECT update_organization_stats(:organization_id)
-                    """), {"organization_id": organization_id})
-                    await self.db.commit()
-                    logger.debug("Successfully updated organization stats")
-
-                    # Get updated stats
-                    result = await self.db.execute(
-                        select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
-                    )
-                    stats = result.scalar_one_or_none()
-                    logger.debug(f"Direct query result: {stats}")
+                    async with self.db.begin() as transaction:
+                        # Update stats for this organization
+                        await transaction.execute(text("""
+                            SELECT update_organization_stats(:organization_id)
+                        """), {"organization_id": organization_id})
+                        # Get updated stats
+                        result = await transaction.execute(
+                            select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
+                        )
+                        stats = result.scalar_one_or_none()
+                        logger.debug(f"Direct query result: {stats}")
                 except Exception as e:
                     logger.error(f"Error updating organization stats: {str(e)}\n{traceback.format_exc()}")
                     return None
