@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from app.database.database_factory import get_db
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
-from app.database.models.db_models import User, Organization, UserRole, File, KnowledgeBase
+from app.database.models.db_models import User, Organization, UserRole, File, FileStatus
 from app.database.repositories.organization_repository import OrganizationRepository
 
 router = APIRouter(
@@ -35,7 +35,7 @@ class FileResponse(BaseModel):
     file_type: str
     status: str
     created_at: datetime
-    chunks_count: int
+    chunks_count: int = 0
 
 class OrganizationDetail(OrganizationResponse):
     total_files: int
@@ -115,6 +115,8 @@ async def get_organization_details(
     """Organizasyon detaylarını, istatistiklerini ve dosyalarını getirir"""
     try:
         org_repo = OrganizationRepository(db)
+
+        # Get organization details
         organization = await org_repo.get_organization_by_id(org_id)
 
         if not organization:
@@ -123,7 +125,7 @@ async def get_organization_details(
                 detail="Organization not found"
             )
 
-        # Kullanıcının bu organizasyona erişimi var mı kontrol et
+        # Check user access
         user_orgs = await org_repo.get_organizations_by_user(current_user.id)
         if organization not in user_orgs:
             raise HTTPException(
@@ -131,24 +133,27 @@ async def get_organization_details(
                 detail="Access denied to this organization"
             )
 
-        # Organizasyonun dosya istatistiklerini hesapla
-        total_files = len(organization.files)
-        total_processed = sum(1 for f in organization.files if any(kb for kb in f.knowledge_base))
-        last_activity = max(
-            (f.updated_at for f in organization.files),
-            default=None
-        ) if organization.files else None
+        # Get organization files separately
+        files = await org_repo.get_organization_files(org_id)
 
-        # Dosya listesini hazırla
-        files = [
+        # Calculate file statistics
+        total_files = len(files)
+        total_processed = sum(1 for f in files if f.status == FileStatus.COMPLETED)
+        last_activity = max(
+            (f.updated_at for f in files),
+            default=None
+        ) if files else None
+
+        # Prepare file response list
+        file_responses = [
             FileResponse(
                 id=f.id,
                 filename=f.filename,
                 file_type=f.file_type,
-                status=f.status.value,
+                status=f.status,
                 created_at=f.created_at,
-                chunks_count=len(f.knowledge_base)
-            ) for f in organization.files
+                chunks_count=0  # Knowledge base sayısını ayrı bir endpoint'te döndüreceğiz
+            ) for f in files
         ]
 
         return BaseResponse(
@@ -162,12 +167,13 @@ async def get_organization_details(
                 total_files=total_files,
                 total_processed_files=total_processed,
                 last_activity=last_activity,
-                files=files
+                files=file_responses
             )
         )
     except HTTPException as e:
         raise e
     except Exception as e:
+        logger.error(f"Error fetching organization details: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
