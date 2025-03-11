@@ -154,6 +154,7 @@ class DocumentService:
                     try:
                         batch_start = datetime.now()
 
+                        # Embeddings oluşturma ve oluşturulan embeddingler ile knowledge base kayıtlarını yapma
                         try:
                             embeddings = await self.openai_service.create_embeddings(chunk_batch)
 
@@ -186,13 +187,31 @@ class DocumentService:
 
                         except Exception as e:
                             logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
+                            # Continue with next batch despite errors
                             continue
 
                     except Exception as e:
                         logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
+                        # Continue with next batch despite errors
                         continue
 
-            # Update file status to completed
+                # Update chunk count before setting status to completed
+                try:
+                    stmt = select(File).where(File.id == db_file_id)
+                    result = await session.execute(stmt)
+                    db_file = result.scalar_one_or_none()
+
+                    if db_file:
+                        # Directly use total_chunks instead of counting from knowledge_base
+                        logger.info(f"Updating chunk count for file {db_file_id} from {db_file.chunk_count} to {total_chunks}")
+                        db_file.chunk_count = total_chunks
+                        await session.commit()
+                        logger.info(f"Successfully updated chunk count for file {db_file_id}: {total_chunks} chunks")
+                except Exception as e:
+                    logger.error(f"Error updating chunk count: {str(e)}")
+                    raise  # Add raise to ensure we don't proceed to COMPLETED status if chunk count update fails
+
+            # Update file status to completed only after chunk count is updated
             await self.update_file_status(db_file_id, FileStatus.COMPLETED)
             logger.info(f"Completed processing document {filename} (ID: {db_file_id})")
 

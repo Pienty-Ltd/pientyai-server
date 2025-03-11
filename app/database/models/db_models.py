@@ -103,11 +103,6 @@ class File(Base):
     organization = relationship("Organization", back_populates="files")
     knowledge_base = relationship("KnowledgeBase", back_populates="file")
 
-    @property
-    def chunk_count(self) -> int:
-        """Returns the number of chunks associated with this file"""
-        return len(self.knowledge_base) if self.knowledge_base else 0
-
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_base"
 
