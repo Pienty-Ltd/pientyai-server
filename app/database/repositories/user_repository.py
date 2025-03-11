@@ -13,6 +13,7 @@ class UserRepository:
         self.db = db
 
     async def get_user_by_fp(self, fp: str) -> Optional[User]:
+        """Get user by fingerprint without loading relationships"""
         try:
             result = await self.db.execute(select(User).filter(User.fp == fp))
             return result.scalar_one_or_none()
@@ -21,6 +22,7 @@ class UserRepository:
             return None
 
     async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get user by email without loading relationships"""
         try:
             result = await self.db.execute(select(User).filter(User.email == email))
             return result.scalar_one_or_none()
@@ -29,6 +31,7 @@ class UserRepository:
             return None
 
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """Get user by ID without loading relationships"""
         try:
             result = await self.db.execute(select(User).filter(User.id == user_id))
             return result.scalar_one_or_none()
@@ -37,6 +40,7 @@ class UserRepository:
             return None
 
     async def insert_user(self, user_data: dict) -> Optional[User]:
+        """Create a new user"""
         try:
             # Check if email already exists
             existing_user = await self.get_user_by_email(user_data["email"])
@@ -54,7 +58,7 @@ class UserRepository:
 
             user = User(**user_data)
             self.db.add(user)
-            await self.db.commit()  # This will create a new transaction
+            await self.db.commit()
             await self.db.refresh(user)
             logger.info(f"Successfully created user with email: {user.email}")
             return user
@@ -69,6 +73,7 @@ class UserRepository:
             return None
 
     async def update_user(self, user_fp: str, updates: dict) -> Optional[User]:
+        """Update user information"""
         try:
             user = await self.get_user_by_fp(user_fp)
             if user:
@@ -90,12 +95,8 @@ class UserRepository:
             return None
 
     async def create_user_instance_from_cache(self, cached_data: Dict[str, Any]) -> User:
-        """
-        Redis'ten alınan kullanıcı verilerinden bir User nesnesi oluşturur.
-        Bu metod veritabanına erişmez, sadece bellekte bir User nesnesi oluşturur.
-        """
+        """Create a User instance from cached data without accessing the database"""
         try:
-            # User nesnesini cached verilerle oluştur
             user = User(
                 id=cached_data['id'],
                 email=cached_data['email'],

@@ -17,18 +17,18 @@ class PromoCode(Base):
     code = Column(String(50), unique=True, nullable=False, index=True)
     description = Column(String(200))
     discount_type = Column(SQLEnum(DiscountType), nullable=False)
-    discount_value = Column(Numeric(10, 2))  # Amount or percentage of discount
-    max_uses = Column(Integer, default=1)    # How many times this code can be used
-    max_uses_per_user = Column(Integer, default=1)  # How many times a single user can use this code
-    times_used = Column(Integer, default=0)   # How many times this code has been used
+    discount_value = Column(Numeric(10, 2))
+    max_uses = Column(Integer, default=1)
+    max_uses_per_user = Column(Integer, default=1)
+    times_used = Column(Integer, default=0)
     valid_from = Column(DateTime, default=func.now())
-    valid_until = Column(DateTime)           # When the code expires
+    valid_until = Column(DateTime)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    # Relationship with usage history
-    usage_history = relationship("PromoCodeUsage", back_populates="promo_code")
+    # Relationship with usage history - set to dynamic for optimized loading
+    usage_history = relationship("PromoCodeUsage", back_populates="promo_code", lazy="dynamic")
 
     def is_valid(self) -> bool:
         """Check if the promo code is valid for use"""
@@ -59,9 +59,9 @@ class PromoCodeUsage(Base):
     promo_code_id = Column(Integer, ForeignKey("promo_codes.id"), nullable=False)
     user_id = Column(Integer, nullable=False, index=True)
     used_at = Column(DateTime, default=func.now(), nullable=False)
-    amount = Column(Numeric(10, 2))  # Original amount before discount
-    discount_amount = Column(Numeric(10, 2))  # Amount of discount applied
-    usage_metadata = Column(String)  # Additional usage information (renamed from metadata)
+    amount = Column(Numeric(10, 2))
+    discount_amount = Column(Numeric(10, 2))
+    usage_metadata = Column(String)
 
-    # Relationship with promo code
-    promo_code = relationship("PromoCode", back_populates="usage_history")
+    # Set lazy loading for the relationship
+    promo_code = relationship("PromoCode", back_populates="usage_history", lazy="select")

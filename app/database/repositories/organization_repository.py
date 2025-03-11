@@ -12,14 +12,9 @@ class OrganizationRepository:
         self.db = db
 
     async def get_organization_by_id(self, org_id: int):
-        """Get organization by ID with users preloaded"""
+        """Get organization by ID without preloading relationships"""
         try:
-            # İlk önce organizasyonu ve kullanıcıları yükle
-            stmt = (
-                select(Organization)
-                .options(selectinload(Organization.users))
-                .filter(Organization.id == org_id)
-            )
+            stmt = select(Organization).filter(Organization.id == org_id)
             result = await self.db.execute(stmt)
             organization = result.scalar_one_or_none()
 
@@ -50,10 +45,9 @@ class OrganizationRepository:
     async def get_organizations_by_user(self, user_id: int, page: int = 1, per_page: int = 20):
         """Get paginated organizations for a user"""
         try:
-            # Calculate offset
             offset = (page - 1) * per_page
 
-            # Get total count
+            # Get total count using the dynamic relationship
             count_stmt = (
                 select(func.count(Organization.id))
                 .join(Organization.users)
@@ -62,7 +56,7 @@ class OrganizationRepository:
             total_count = await self.db.execute(count_stmt)
             total = total_count.scalar()
 
-            # Get paginated organizations
+            # Get paginated organizations without preloading relationships
             stmt = (
                 select(Organization)
                 .join(Organization.users)
@@ -81,17 +75,14 @@ class OrganizationRepository:
             raise
 
     async def create_organization(self, org_data: dict, user: User = None):
-        """Create organization and add a user to it"""
+        """Create organization and optionally add a user to it"""
         try:
-            # Create organization
             organization = Organization(**org_data)
             self.db.add(organization)
 
-            # If user is provided, add to organization
             if user:
                 organization.users.append(user)
 
-            # Commit the transaction
             await self.db.commit()
             await self.db.refresh(organization)
 
