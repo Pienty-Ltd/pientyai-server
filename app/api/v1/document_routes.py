@@ -147,7 +147,7 @@ async def list_user_documents(
         logger.info(f"Fetching documents for user {current_user.id}, page {page}, per_page {per_page}")
         start_time = datetime.now()
 
-        document_service = DocumentService()
+        document_service = DocumentService()  # No S3 client initialization here
         documents, total_count = await document_service.get_user_accessible_documents(
             user_id=current_user.id,
             page=page,
@@ -169,7 +169,7 @@ async def list_user_documents(
                         file_type=doc.file_type,
                         status=doc.status,
                         created_at=doc.created_at,
-                        chunks_count=0,  # Set to 0 since we don't load knowledge_base
+                        chunks_count=doc.chunk_count if hasattr(doc, 'chunk_count') else 0,
                         organization_id=doc.organization_id
                     ) for doc in documents
                 ],

@@ -1,0 +1,95 @@
+2025-03-11 22:40:29,539 - app.api.v1.middlewares.request_logging_middleware - INFO - Request started: GET /api/v1/documents
+2025-03-11 22:40:29,540 - app.api.v1.middlewares.request_logging_middleware - DEBUG - Request details: headers={'host': '46c6dd23-92b6-42e0-8441-207276f1a744-00-ypuyupxvbz8d.riker.replit.dev', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36', 'accept': 'application/json, text/plain, */*', 'accept-encoding': 'gzip, deflate, br, zstd', 'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7,la;q=0.6', 'authorization': 'Bearer [REDACTED]', 'origin': 'https://53b27c3e-da65-4fbf-9f03-915d7ef74134-00-1xegreh0l3jg3.kirk.replit.dev', 'referer': 'https://53b27c3e-da65-4fbf-9f03-915d7ef74134-00-1xegreh0l3jg3.kirk.replit.dev/', 'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"', 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"', 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'cross-site', 'x-forwarded-for': '176.40.242.146, 10.81.6.168', 'x-forwarded-proto': 'https', 'x-replit-user-bio': '', 'x-replit-user-id': '', 'x-replit-user-name': '', 'x-replit-user-profile-image': '', 'x-replit-user-roles': '', 'x-replit-user-teams': '', 'x-replit-user-url': ''}, query_params={'page': '1', 'per_page': '20'}
+2025-03-11 22:40:29,541 - app.core.security - DEBUG - Successfully decoded token for user: tunaycl@outlook.com
+2025-03-11 22:40:29,541 - app.core.services.redis_service - DEBUG - Created new RedisService instance
+2025-03-11 22:40:29,541 - app.core.services.redis_service - DEBUG - Initializing new Redis connection...
+2025-03-11 22:40:30,185 - app.core.services.redis_service - INFO - Successfully established Redis connection
+2025-03-11 22:40:30,346 - app.core.services.redis_service - DEBUG - Successfully retrieved Redis key: user:user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 22:40:30,346 - app.core.security - INFO - Retrieved user data from Redis cache for fp: user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 22:40:30,346 - app.api.v1.auth - DEBUG - Using cached user data for fp: user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 22:40:30,346 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-03-11 22:40:30,346 - sqlalchemy.engine.Engine - INFO - BEGIN (implicit)
+2025-03-11 22:40:30,347 INFO sqlalchemy.engine.Engine SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at 
+FROM users 
+WHERE users.fp = $1::VARCHAR
+2025-03-11 22:40:30,347 - sqlalchemy.engine.Engine - INFO - SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at 
+FROM users 
+WHERE users.fp = $1::VARCHAR
+2025-03-11 22:40:30,347 INFO sqlalchemy.engine.Engine [cached since 2.891s ago] ('user_qTSfFwc7HRuRaEqqYwpjiHzdq',)
+2025-03-11 22:40:30,347 - sqlalchemy.engine.Engine - INFO - [cached since 2.891s ago] ('user_qTSfFwc7HRuRaEqqYwpjiHzdq',)
+2025-03-11 22:40:30,662 INFO sqlalchemy.engine.Engine SELECT users_1.id AS users_1_id, organizations.id AS organizations_id, organizations.name AS organizations_name, organizations.description AS organizations_description, organizations.created_at AS organizations_created_at, organizations.updated_at AS organizations_updated_at 
+FROM users AS users_1 JOIN user_organizations AS user_organizations_1 ON users_1.id = user_organizations_1.user_id JOIN organizations ON organizations.id = user_organizations_1.organization_id 
+WHERE users_1.id IN ($1::INTEGER)
+2025-03-11 22:40:30,662 - sqlalchemy.engine.Engine - INFO - SELECT users_1.id AS users_1_id, organizations.id AS organizations_id, organizations.name AS organizations_name, organizations.description AS organizations_description, organizations.created_at AS organizations_created_at, organizations.updated_at AS organizations_updated_at 
+FROM users AS users_1 JOIN user_organizations AS user_organizations_1 ON users_1.id = user_organizations_1.user_id JOIN organizations ON organizations.id = user_organizations_1.organization_id 
+WHERE users_1.id IN ($1::INTEGER)
+2025-03-11 22:40:30,662 INFO sqlalchemy.engine.Engine [cached since 1.76s ago] (1,)
+2025-03-11 22:40:30,662 - sqlalchemy.engine.Engine - INFO - [cached since 1.76s ago] (1,)
+2025-03-11 22:40:30,820 - app.api.v1.middlewares.validation_middleware - INFO - Pagination request: page=1, per_page=20
+2025-03-11 22:40:30,820 - app.api.v1.document_routes - INFO - Fetching documents for user 1, page 1, per_page 20
+2025-03-11 22:40:30,821 - botocore.hooks - DEBUG - Changing event name from creating-client-class.iot-data to creating-client-class.iot-data-plane
+2025-03-11 22:40:30,822 - botocore.hooks - DEBUG - Changing event name from before-call.apigateway to before-call.api-gateway
+2025-03-11 22:40:30,823 - botocore.hooks - DEBUG - Changing event name from request-created.machinelearning.Predict to request-created.machine-learning.Predict
+2025-03-11 22:40:30,824 - botocore.hooks - DEBUG - Changing event name from before-parameter-build.autoscaling.CreateLaunchConfiguration to before-parameter-build.auto-scaling.CreateLaunchConfiguration
+2025-03-11 22:40:30,824 - botocore.hooks - DEBUG - Changing event name from before-parameter-build.route53 to before-parameter-build.route-53
+2025-03-11 22:40:30,825 - botocore.hooks - DEBUG - Changing event name from request-created.cloudsearchdomain.Search to request-created.cloudsearch-domain.Search
+2025-03-11 22:40:30,825 - botocore.hooks - DEBUG - Changing event name from docs.*.autoscaling.CreateLaunchConfiguration.complete-section to docs.*.auto-scaling.CreateLaunchConfiguration.complete-section
+2025-03-11 22:40:30,827 - botocore.hooks - DEBUG - Changing event name from before-parameter-build.logs.CreateExportTask to before-parameter-build.cloudwatch-logs.CreateExportTask
+2025-03-11 22:40:30,827 - botocore.hooks - DEBUG - Changing event name from docs.*.logs.CreateExportTask.complete-section to docs.*.cloudwatch-logs.CreateExportTask.complete-section
+2025-03-11 22:40:30,827 - botocore.hooks - DEBUG - Changing event name from before-parameter-build.cloudsearchdomain.Search to before-parameter-build.cloudsearch-domain.Search
+2025-03-11 22:40:30,827 - botocore.hooks - DEBUG - Changing event name from docs.*.cloudsearchdomain.Search.complete-section to docs.*.cloudsearch-domain.Search.complete-section
+2025-03-11 22:40:30,830 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/endpoints.json
+2025-03-11 22:40:30,988 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/sdk-default-configuration.json
+2025-03-11 22:40:30,988 - botocore.hooks - DEBUG - Event choose-service-name: calling handler <function handle_service_name_alias at 0x7f2750887f60>
+2025-03-11 22:40:31,006 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/s3/2006-03-01/service-2.json.gz
+2025-03-11 22:40:31,012 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/s3/2006-03-01/service-2.sdk-extras.json
+2025-03-11 22:40:31,024 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/s3/2006-03-01/endpoint-rule-set-1.json.gz
+2025-03-11 22:40:31,029 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/partitions.json
+2025-03-11 22:40:31,032 - botocore.hooks - DEBUG - Event creating-client-class.s3: calling handler <function add_generate_presigned_post at 0x7f2750a21800>
+2025-03-11 22:40:31,032 - botocore.hooks - DEBUG - Event creating-client-class.s3: calling handler <function lazy_call.<locals>._handler at 0x7f274f396de0>
+2025-03-11 22:40:31,048 - botocore.hooks - DEBUG - Event creating-client-class.s3: calling handler <function add_generate_presigned_url at 0x7f2750a21580>
+2025-03-11 22:40:31,048 - botocore.configprovider - DEBUG - Looking for endpoint for s3 via: environment_service
+2025-03-11 22:40:31,048 - botocore.configprovider - DEBUG - Looking for endpoint for s3 via: environment_global
+2025-03-11 22:40:31,048 - botocore.configprovider - DEBUG - Looking for endpoint for s3 via: config_service
+2025-03-11 22:40:31,049 - botocore.configprovider - DEBUG - Looking for endpoint for s3 via: config_global
+2025-03-11 22:40:31,049 - botocore.configprovider - DEBUG - No configured endpoint found.
+2025-03-11 22:40:31,052 - botocore.endpoint - DEBUG - Setting s3 timeout as (60, 60)
+2025-03-11 22:40:31,055 - botocore.loaders - DEBUG - Loading JSON file: /home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/botocore/data/_retry.json
+2025-03-11 22:40:31,055 - botocore.client - DEBUG - Registering retry handlers for service: s3
+2025-03-11 22:40:31,055 - botocore.utils - DEBUG - Registering S3 region redirector handler
+2025-03-11 22:40:31,056 - botocore.utils - DEBUG - Registering S3Express Identity Resolver
+2025-03-11 22:40:32,694 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-03-11 22:40:32,694 - sqlalchemy.engine.Engine - INFO - BEGIN (implicit)
+2025-03-11 22:40:32,698 INFO sqlalchemy.engine.Engine SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at, organizations_1.id AS id_1, organizations_1.name, organizations_1.description, organizations_1.created_at AS created_at_1, organizations_1.updated_at AS updated_at_1 
+FROM users LEFT OUTER JOIN (user_organizations AS user_organizations_1 JOIN organizations AS organizations_1 ON organizations_1.id = user_organizations_1.organization_id) ON users.id = user_organizations_1.user_id 
+WHERE users.id = $1::INTEGER
+2025-03-11 22:40:32,698 - sqlalchemy.engine.Engine - INFO - SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at, organizations_1.id AS id_1, organizations_1.name, organizations_1.description, organizations_1.created_at AS created_at_1, organizations_1.updated_at AS updated_at_1 
+FROM users LEFT OUTER JOIN (user_organizations AS user_organizations_1 JOIN organizations AS organizations_1 ON organizations_1.id = user_organizations_1.organization_id) ON users.id = user_organizations_1.user_id 
+WHERE users.id = $1::INTEGER
+2025-03-11 22:40:32,698 INFO sqlalchemy.engine.Engine [generated in 0.00024s] (1,)
+2025-03-11 22:40:32,698 - sqlalchemy.engine.Engine - INFO - [generated in 0.00024s] (1,)
+2025-03-11 22:40:34,334 INFO sqlalchemy.engine.Engine SELECT count(files.id) AS count_1 
+FROM files 
+WHERE files.organization_id IN ($1::INTEGER, $2::INTEGER)
+2025-03-11 22:40:34,334 - sqlalchemy.engine.Engine - INFO - SELECT count(files.id) AS count_1 
+FROM files 
+WHERE files.organization_id IN ($1::INTEGER, $2::INTEGER)
+2025-03-11 22:40:34,334 INFO sqlalchemy.engine.Engine [generated in 0.00030s] (13, 15)
+2025-03-11 22:40:34,334 - sqlalchemy.engine.Engine - INFO - [generated in 0.00030s] (13, 15)
+2025-03-11 22:40:34,659 INFO sqlalchemy.engine.Engine SELECT files.id, files.fp, files.filename, files.file_type, files.s3_key, files.status, files.file_size, files.created_at, files.updated_at, files.user_id, files.organization_id 
+FROM files 
+WHERE files.organization_id IN ($3::INTEGER, $4::INTEGER) ORDER BY files.created_at DESC 
+ LIMIT $1::INTEGER OFFSET $2::INTEGER
+2025-03-11 22:40:34,659 - sqlalchemy.engine.Engine - INFO - SELECT files.id, files.fp, files.filename, files.file_type, files.s3_key, files.status, files.file_size, files.created_at, files.updated_at, files.user_id, files.organization_id 
+FROM files 
+WHERE files.organization_id IN ($3::INTEGER, $4::INTEGER) ORDER BY files.created_at DESC 
+ LIMIT $1::INTEGER OFFSET $2::INTEGER
+2025-03-11 22:40:34,659 INFO sqlalchemy.engine.Engine [generated in 0.00027s] (20, 0, 13, 15)
+2025-03-11 22:40:34,659 - sqlalchemy.engine.Engine - INFO - [generated in 0.00027s] (20, 0, 13, 15)
+2025-03-11 22:40:35,471 INFO sqlalchemy.engine.Engine ROLLBACK
+2025-03-11 22:40:35,471 - sqlalchemy.engine.Engine - INFO - ROLLBACK
+2025-03-11 22:40:35,632 - app.api.v1.document_routes - INFO - Retrieved 1 documents (Total: 1, Duration: 4.811472s)
+2025-03-11 22:40:35,632 INFO sqlalchemy.engine.Engine ROLLBACK
+2025-03-11 22:40:35,632 - sqlalchemy.engine.Engine - INFO - ROLLBACK
+2025-03-11 22:40:35,789 - app.api.v1.middlewares.request_logging_middleware - INFO - Request completed: GET /api/v1/documents - Status: 200 (Duration: 6.25s)
+INFO:     172.31.128.57:52714 - "GET /api/v1/documents?page=1&per_page=20 HTTP/1.1" 200 OK

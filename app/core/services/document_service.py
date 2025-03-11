@@ -25,14 +25,21 @@ class DocumentService:
     BATCH_SIZE = 20    # Number of chunks to process in one batch
 
     def __init__(self):
-        self.s3_client = boto3.client(
-            's3',
-            aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
-            region_name=config.AWS_REGION
-        )
+        self._s3_client = None
         self.bucket_name = config.AWS_BUCKET_NAME
         self.openai_service = OpenAIService()
+
+    @property
+    def s3_client(self):
+        """Lazy initialization of S3 client only when needed"""
+        if self._s3_client is None:
+            self._s3_client = boto3.client(
+                's3',
+                aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+                region_name=config.AWS_REGION
+            )
+        return self._s3_client
 
     async def create_file_record(
         self,
