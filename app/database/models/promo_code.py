@@ -2,13 +2,12 @@ from datetime import datetime
 from enum import Enum
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum as SQLEnum, Numeric, ForeignKey
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 from app.database.database_factory import Base
 
 class DiscountType(str, Enum):
-    PERCENTAGE = "percentage"  # e.g., 20% off
-    FIXED = "fixed"           # e.g., $10 off
-    FULL = "full"            # 100% off (free)
+    PERCENTAGE = "percentage"
+    FIXED = "fixed"
+    FULL = "full"
 
 class PromoCode(Base):
     __tablename__ = "promo_codes"
@@ -26,9 +25,6 @@ class PromoCode(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    # Relationship with usage history - set to dynamic for optimized loading
-    usage_history = relationship("PromoCodeUsage", back_populates="promo_code", lazy="dynamic")
 
     def is_valid(self) -> bool:
         """Check if the promo code is valid for use"""
@@ -62,6 +58,3 @@ class PromoCodeUsage(Base):
     amount = Column(Numeric(10, 2))
     discount_amount = Column(Numeric(10, 2))
     usage_metadata = Column(String)
-
-    # Set lazy loading for the relationship
-    promo_code = relationship("PromoCode", back_populates="usage_history", lazy="select")

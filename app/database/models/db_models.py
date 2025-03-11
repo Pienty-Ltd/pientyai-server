@@ -1,5 +1,4 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text, CheckConstraint
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database.database_factory import Base
 from app.core.utils import create_random_key
@@ -51,18 +50,6 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    organizations = relationship(
-        "Organization",
-        secondary=user_organizations,
-        back_populates="users",
-        lazy="dynamic"  
-    )
-
-    subscription = relationship("UserSubscription", back_populates="user", lazy="select")
-    payment_history = relationship("PaymentHistory", back_populates="user", lazy="dynamic")
-    files = relationship("File", back_populates="user", lazy="dynamic")
-    dashboard_stats = relationship("DashboardStats", back_populates="user", lazy="select")
-
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -71,16 +58,6 @@ class Organization(Base):
     description = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    users = relationship(
-        "User",
-        secondary=user_organizations,
-        back_populates="organizations",
-        lazy="dynamic"  
-    )
-    files = relationship("File", back_populates="organization", lazy="dynamic")
-    knowledge_base = relationship("KnowledgeBase", back_populates="organization", lazy="dynamic")
-    dashboard_stats = relationship("DashboardStats", back_populates="organization", lazy="select")
 
 class File(Base):
     __tablename__ = "files"
@@ -100,10 +77,6 @@ class File(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
 
-    user = relationship("User", back_populates="files", lazy="select")
-    organization = relationship("Organization", back_populates="files", lazy="select")
-    knowledge_base = relationship("KnowledgeBase", back_populates="file", lazy="dynamic")
-
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_base"
 
@@ -120,9 +93,6 @@ class KnowledgeBase(Base):
     file_id = Column(Integer, ForeignKey("files.id"), nullable=False)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
 
-    file = relationship("File", back_populates="knowledge_base", lazy="select")
-    organization = relationship("Organization", back_populates="knowledge_base", lazy="select")
-
 class UserSubscription(Base):
     __tablename__ = "user_subscriptions"
 
@@ -137,8 +107,6 @@ class UserSubscription(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    user = relationship("User", back_populates="subscription")
-
 class PaymentHistory(Base):
     __tablename__ = "payment_history"
 
@@ -152,9 +120,6 @@ class PaymentHistory(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    user = relationship("User", back_populates="payment_history")
-
-
 class DashboardStats(Base):
     __tablename__ = "dashboard_stats"
 
@@ -163,18 +128,11 @@ class DashboardStats(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     total_knowledge_base_count = Column(Integer, default=0)
     total_file_count = Column(Integer, default=0)
-    total_storage_used = Column(Integer, default=0)  
+    total_storage_used = Column(Integer, default=0)
     last_activity_date = Column(DateTime(timezone=True))
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    
     __table_args__ = (
         CheckConstraint('NOT(user_id IS NULL AND organization_id IS NULL)'),
         CheckConstraint('NOT(user_id IS NOT NULL AND organization_id IS NOT NULL)'),
     )
-
-    user = relationship("User", back_populates="dashboard_stats")
-    organization = relationship("Organization", back_populates="dashboard_stats")
-
-User.dashboard_stats = relationship("DashboardStats", back_populates="user", lazy="select")
-Organization.dashboard_stats = relationship("DashboardStats", back_populates="organization", lazy="select")
