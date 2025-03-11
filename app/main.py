@@ -51,7 +51,6 @@ app.include_router(document_router)
 app.include_router(dashboard_router)
 app.include_router(v1_router)
 
-
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 @app.exception_handler(ValidationError)
@@ -165,5 +164,6 @@ if __name__ == "__main__":
     uvicorn.run("app.main:app",
                 host="0.0.0.0",
                 port=3348,
+    
                 reload=True,
-                log_level="info")
+                log_level="ifo")

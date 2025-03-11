@@ -8,10 +8,13 @@ from docx import Document
 from PyPDF2 import PdfReader
 import asyncio
 from app.core.config import config
-from app.database.models.db_models import File, KnowledgeBase, FileStatus
+from app.database.models.db_models import File, KnowledgeBase, FileStatus, User # Added User import
 from app.core.services.openai_service import OpenAIService
-from sqlalchemy import select, desc
-from sqlalchemy.sql.expression import func
+from sqlalchemy import select, desc, delete, func
+from sqlalchemy.orm import joinedload
+from sqlalchemy import delete, select, func
+import math
+
 from app.database.database_factory import async_session_maker
 
 logger = logging.getLogger(__name__)
@@ -123,8 +126,18 @@ class DocumentService:
             chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
                            for i in range(0, len(text_chunks), self.BATCH_SIZE)]
 
+            total_chunks = len(text_chunks)
             knowledge_base_entries = []
+
             async with async_session_maker() as session:
+                # Update chunk count early
+                stmt = select(File).where(File.id == db_file_id)
+                result = await session.execute(stmt)
+                db_file = result.scalar_one_or_none()
+                if db_file:
+                    db_file.chunk_count = total_chunks
+                    await session.commit()
+
                 for batch_idx, chunk_batch in enumerate(chunk_batches):
                     try:
                         # Generate embeddings for the batch
@@ -142,7 +155,7 @@ class DocumentService:
                                 meta_info=json.dumps({
                                     "filename": filename,
                                     "chunk_number": start_idx + idx + 1,
-                                    "total_chunks": len(text_chunks)
+                                    "total_chunks": total_chunks
                                 }),
                                 file_id=db_file_id,
                                 organization_id=organization_id
@@ -167,6 +180,27 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error in async document processing: {str(e)}")
             await self.update_file_status(db_file_id, FileStatus.FAILED)
+            raise
+
+    async def get_organization_documents(
+        self,
+        organization_id: int
+    ) -> List[File]:
+        """Get all documents for an organization"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(File).where(
+                    File.organization_id == organization_id
+                ).order_by(desc(File.created_at))
+
+                result = await session.execute(stmt)
+                files = result.scalars().all()
+
+                logger.info(f"Retrieved {len(files)} documents for organization {organization_id}")
+                return files
+
+        except Exception as e:
+            logger.error(f"Error fetching organization documents: {str(e)}")
             raise
 
     async def _extract_text_chunks(
@@ -292,27 +326,150 @@ class DocumentService:
             logger.error(f"Error searching documents: {str(e)}")
             raise
 
-    async def get_organization_documents(
+    async def get_user_accessible_documents(
         self,
-        organization_id: int
-    ) -> List[File]:
-        """
-        Get all documents for an organization
-        """
+        user_id: int,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[File], int]:
+        """Get all documents accessible to a user across their organizations"""
         try:
             async with async_session_maker() as session:
+                # Get user's organizations
+                user_stmt = select(User).where(User.id == user_id).options(
+                    joinedload(User.organizations)
+                )
+                result = await session.execute(user_stmt)
+                user = result.unique().scalar_one_or_none()
+
+                if not user:
+                    raise ValueError("User not found")
+
+                org_ids = [org.id for org in user.organizations]
+
+                # Count total documents
+                count_stmt = select(func.count(File.id)).where(
+                    File.organization_id.in_(org_ids)
+                )
+                result = await session.execute(count_stmt)
+                total_count = result.scalar()
+
+                # Get paginated documents
+                offset = (page - 1) * per_page
                 stmt = select(File).where(
-                    File.organization_id == organization_id
-                ).order_by(desc(File.created_at))
+                    File.organization_id.in_(org_ids)
+                ).options(
+                    joinedload(File.knowledge_base)
+                ).order_by(
+                    File.created_at.desc()
+                ).offset(offset).limit(per_page)
 
                 result = await session.execute(stmt)
-                files = result.scalars().all()
+                documents = result.unique().scalars().all()
 
-                logger.info(f"Retrieved {len(files)} documents for organization {organization_id}")
-                return files
+                return documents, total_count
+
+        except Exception as e:
+            logger.error(f"Error fetching user accessible documents: {str(e)}")
+            raise
+
+    async def get_organization_documents_paginated(
+        self,
+        organization_id: int,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[File], int]:
+        """Get paginated documents for an organization"""
+        try:
+            async with async_session_maker() as session:
+                # Count total documents
+                count_stmt = select(func.count(File.id)).where(
+                    File.organization_id == organization_id
+                )
+                result = await session.execute(count_stmt)
+                total_count = result.scalar()
+
+                # Get paginated documents
+                offset = (page - 1) * per_page
+                stmt = select(File).where(
+                    File.organization_id == organization_id
+                ).options(
+                    joinedload(File.knowledge_base)
+                ).order_by(
+                    File.created_at.desc()
+                ).offset(offset).limit(per_page)
+
+                result = await session.execute(stmt)
+                documents = result.unique().scalars().all()
+
+                return documents, total_count
 
         except Exception as e:
             logger.error(f"Error fetching organization documents: {str(e)}")
+            raise
+
+    async def get_document_by_id(
+        self,
+        organization_id: int,
+        document_id: int
+    ) -> Optional[File]:
+        """Get a single document by ID within an organization"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(File).where(
+                    File.id == document_id,
+                    File.organization_id == organization_id
+                ).options(
+                    joinedload(File.knowledge_base)
+                )
+                result = await session.execute(stmt)
+                document = result.unique().scalar_one_or_none()
+                return document
+
+        except Exception as e:
+            logger.error(f"Error fetching document: {str(e)}")
+            raise
+
+    async def delete_document(
+        self,
+        organization_id: int,
+        document_id: int
+    ) -> bool:
+        """Delete a document and its associated knowledge base entries"""
+        try:
+            async with async_session_maker() as session:
+                # First verify the document exists and belongs to the organization
+                document = await self.get_document_by_id(organization_id, document_id)
+                if not document:
+                    return False
+
+                # Delete knowledge base entries
+                kb_stmt = delete(KnowledgeBase).where(
+                    KnowledgeBase.file_id == document_id
+                )
+                await session.execute(kb_stmt)
+
+                # Delete the document record
+                file_stmt = delete(File).where(
+                    File.id == document_id,
+                    File.organization_id == organization_id
+                )
+                await session.execute(file_stmt)
+
+                # Delete from S3
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=document.s3_key
+                    )
+                except Exception as e:
+                    logger.warning(f"Error deleting file from S3: {str(e)}")
+
+                await session.commit()
+                return True
+
+        except Exception as e:
+            logger.error(f"Error deleting document: {str(e)}")
             raise
 
     async def get_file_from_s3(self, s3_key: str) -> Optional[bytes]:
