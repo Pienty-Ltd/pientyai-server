@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import List, Optional
-import openai
+from openai import OpenAI
 from app.core.config import config
 import logging
 
@@ -13,7 +13,7 @@ class OpenAIService:
     RETRY_DELAY = 1  # Delay between retries in seconds
 
     def __init__(self):
-        openai.api_key = config.OPENAI_API_KEY
+        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
 
     async def create_embeddings(self, text_chunks: List[str]) -> List[List[float]]:
         """
@@ -30,15 +30,24 @@ class OpenAIService:
 
                 while retry_count < self.MAX_RETRIES:
                     try:
-                        response = await openai.embeddings.create(
+                        logger.debug(f"Attempting to create embeddings for batch of size {len(batch)}")
+
+                        # Run the synchronous API call in a thread pool to avoid blocking
+                        response = await asyncio.to_thread(
+                            self.client.embeddings.create,
                             model="text-embedding-ada-002",
                             input=batch
                         )
 
-                        # Extract embeddings from response
-                        batch_embeddings = [item.embedding for item in response.data]
-                        all_embeddings.extend(batch_embeddings)
+                        logger.debug(f"Response type: {type(response)}")
+                        logger.debug(f"Response content: {response}")
 
+                        # Extract embeddings from response data
+                        batch_embeddings = [item.embedding for item in response.data]
+                        logger.debug(f"Successfully extracted {len(batch_embeddings)} embeddings")
+                        logger.debug(f"Sample embedding length: {len(batch_embeddings[0]) if batch_embeddings else 0}")
+
+                        all_embeddings.extend(batch_embeddings)
                         logger.info(f"Successfully generated embeddings for batch {i//self.BATCH_SIZE + 1}")
                         break  # Success, exit retry loop
 
