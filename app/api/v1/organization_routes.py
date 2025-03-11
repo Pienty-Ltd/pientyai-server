@@ -176,7 +176,7 @@ async def get_organization_details(
                 file_type=f.file_type,
                 status=f.status,
                 created_at=f.created_at,
-                chunks_count=0  # Knowledge base sayısını ayrı bir endpoint'te döndüreceğiz
+                chunks_count=len(f.knowledge_base) if hasattr(f, 'knowledge_base') and f.knowledge_base else 0
             ) for f in files
         ]
 

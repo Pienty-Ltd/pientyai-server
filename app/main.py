@@ -55,6 +55,7 @@ app.include_router(document_router)
 app.include_router(dashboard_router)
 app.include_router(v1_router)
 
+
 # Custom exception handler for validation errors
 @app.exception_handler(RequestValidationError)
 @app.exception_handler(ValidationError)
@@ -65,11 +66,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
                             success=False,
                             message="Validation Error",
                             error=ErrorResponse(message="Invalid request data",
-                                                 details=[{
-                                                     "loc": err["loc"],
-                                                     "msg": err["msg"]
-                                                 } for err in exc.errors()
-                                                          ])).dict())
+                                                details=[{
+                                                    "loc": err["loc"],
+                                                    "msg": err["msg"]
+                                                } for err in exc.errors()
+                                                         ])).dict())
 
 
 # Handle unauthorized access and authentication errors
@@ -146,7 +147,7 @@ async def startup_event():
         logger.info("Database tables created successfully")
 
         # Setup dashboard stats cron jobs
-        try:
+        """try:
             db = await get_db().__anext__()
             await db.execute(text("SELECT manage_dashboard_stats_cron_jobs()"))
             await db.commit()
@@ -156,7 +157,7 @@ async def startup_event():
                 f"Error setting up dashboard stats cron jobs: {str(e)}")
         finally:
             if 'db' in locals():
-                await db.close()
+                await db.close()"""
 
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -168,6 +169,5 @@ if __name__ == "__main__":
     uvicorn.run("app.main:app",
                 host="0.0.0.0",
                 port=3348,
-
                 reload=True,
                 log_level="info")

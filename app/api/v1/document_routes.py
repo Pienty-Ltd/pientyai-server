@@ -169,7 +169,7 @@ async def list_user_documents(
                         file_type=doc.file_type,
                         status=doc.status,
                         created_at=doc.created_at,
-                        chunks_count=doc.chunk_count,
+                        chunks_count=0,  # Set to 0 since we don't load knowledge_base
                         organization_id=doc.organization_id
                     ) for doc in documents
                 ],
@@ -239,7 +239,7 @@ async def list_organization_documents(
                         file_type=doc.file_type,
                         status=doc.status,
                         created_at=doc.created_at,
-                        chunks_count=doc.chunk_count,
+                        chunks_count=0,  # Set to 0 since we don't load knowledge_base
                         organization_id=doc.organization_id
                     ) for doc in documents
                 ],

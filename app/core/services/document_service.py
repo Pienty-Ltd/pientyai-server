@@ -8,7 +8,7 @@ from docx import Document
 from PyPDF2 import PdfReader
 import asyncio
 from app.core.config import config
-from app.database.models.db_models import File, KnowledgeBase, FileStatus, User # Added User import
+from app.database.models.db_models import File, KnowledgeBase, FileStatus, User
 from app.core.services.openai_service import OpenAIService
 from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
@@ -384,18 +384,16 @@ class DocumentService:
                 result = await session.execute(count_stmt)
                 total_count = result.scalar()
 
-                # Get paginated documents
+                # Get paginated documents without knowledge base
                 offset = (page - 1) * per_page
                 stmt = select(File).where(
                     File.organization_id.in_(org_ids)
-                ).options(
-                    joinedload(File.knowledge_base)
                 ).order_by(
                     File.created_at.desc()
                 ).offset(offset).limit(per_page)
 
                 result = await session.execute(stmt)
-                documents = result.unique().scalars().all()
+                documents = result.scalars().all()
 
                 return documents, total_count
 
@@ -419,18 +417,16 @@ class DocumentService:
                 result = await session.execute(count_stmt)
                 total_count = result.scalar()
 
-                # Get paginated documents
+                # Get paginated documents without knowledge base
                 offset = (page - 1) * per_page
                 stmt = select(File).where(
                     File.organization_id == organization_id
-                ).options(
-                    joinedload(File.knowledge_base)
                 ).order_by(
                     File.created_at.desc()
                 ).offset(offset).limit(per_page)
 
                 result = await session.execute(stmt)
-                documents = result.unique().scalars().all()
+                documents = result.scalars().all()
 
                 return documents, total_count
 
