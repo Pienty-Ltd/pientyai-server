@@ -52,20 +52,21 @@ async def get_dashboard_data(
     - Last login timestamp
     """
     try:
-        logger.info(f"Fetching dashboard data for user: {current_user.email}, fp: {current_user.fp}")
+        logger.info(f"Fetching dashboard data for user: {current_user.email}")
+
+        # Initialize repositories
         org_repo = OrganizationRepository(db)
         stats_repo = DashboardStatsRepository(db)
 
         # Get user's organizations
         try:
-            organizations = await org_repo.get_organizations_by_user(current_user.id)  # Change from fp to id
+            organizations = await org_repo.get_organizations_by_user(current_user.id)
+            if not organizations:
+                organizations = []
             logger.info(f"Found {len(organizations)} organizations for user")
         except Exception as e:
             logger.error(f"Error fetching organizations: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to fetch organizations"
-            )
+            organizations = []
 
         # Get user statistics
         try:
@@ -73,10 +74,7 @@ async def get_dashboard_data(
             logger.info(f"User stats retrieved: {user_stats}")
         except Exception as e:
             logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to fetch user statistics"
-            )
+            user_stats = None
 
         # Prepare organization info list with stats
         org_info_list = []
@@ -84,7 +82,13 @@ async def get_dashboard_data(
 
         for org in organizations:
             try:
+                # Verify org is a valid Organization object
+                if not isinstance(org, Organization):
+                    logger.error(f"Invalid organization object type: {type(org)}")
+                    continue
+
                 org_stats = await stats_repo.get_organization_stats(org.id)
+
                 org_info = OrganizationInfo(
                     id=org.id,
                     name=org.name,
@@ -99,16 +103,15 @@ async def get_dashboard_data(
                 # If this is the requested organization, set it as current
                 if organization_id and org.id == organization_id:
                     current_org = org_info
+
             except Exception as e:
-                logger.error(f"Error processing organization {org.id}: {str(e)}", exc_info=True)
+                logger.error(f"Error processing organization: {str(e)}", exc_info=True)
                 continue
 
         # If organization_id is provided but not found in user's organizations
-        if organization_id and not current_org:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found or access denied"
-            )
+        if organization_id and not current_org and org_info_list:
+            current_org = org_info_list[0]  # Fallback to first organization
+            logger.warning(f"Requested organization {organization_id} not found, falling back to first available organization")
 
         # Prepare user stats dictionary
         user_stats_dict = None
@@ -120,11 +123,15 @@ async def get_dashboard_data(
                 "last_activity_date": user_stats.last_activity_date
             }
 
+        # Set default current organization if none selected
+        if not current_org and org_info_list:
+            current_org = org_info_list[0]
+
         dashboard_data = DashboardResponse(
             user_email=current_user.email,
-            full_name=current_user.full_name,
+            full_name=current_user.full_name or "",
             organizations=org_info_list,
-            current_organization=current_org or (org_info_list[0] if org_info_list else None),
+            current_organization=current_org,
             user_stats=user_stats_dict,
             last_login=current_user.last_login
         )
@@ -135,8 +142,6 @@ async def get_dashboard_data(
             data=dashboard_data
         )
 
-    except HTTPException as e:
-        raise e
     except Exception as e:
         logger.error(f"Error fetching dashboard data: {str(e)}", exc_info=True)
         raise HTTPException(

@@ -69,3 +69,11 @@ flask-login
 flask-wtf
 flask-login
 flask-wtf
+bcrypt
+fastapi
+passlib
+pydantic
+python-jose
+python-multipart
+sqlalchemy
+uvicorn

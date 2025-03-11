@@ -65,11 +65,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
                             success=False,
                             message="Validation Error",
                             error=ErrorResponse(message="Invalid request data",
-                                                 details=[{
-                                                     "loc": err["loc"],
-                                                     "msg": err["msg"]
-                                                 } for err in exc.errors()
-                                                          ])).dict())
+                                                details=[{
+                                                    "loc": err["loc"],
+                                                    "msg": err["msg"]
+                                                } for err in exc.errors()
+                                                         ])).dict())
 
 
 # Handle unauthorized access and authentication errors
@@ -165,9 +165,9 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
+    # Use port 5000 to match the development guidelines
     uvicorn.run("app.main:app",
                 host="0.0.0.0",
-                port=3348,
-
+                port=5000,
                 reload=True,
                 log_level="info")
