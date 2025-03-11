@@ -143,28 +143,20 @@ class DocumentService:
             total_chunks = len(text_chunks)
             knowledge_base_entries = []
 
-            async with async_session_maker() as session:
-                # Update chunk count early
-                stmt = select(File).where(File.id == db_file_id)
-                result = await session.execute(stmt)
-                db_file = result.scalar_one_or_none()
-                if db_file:
-                    db_file.chunk_count = total_chunks
-                    await session.commit()
-                    logger.info(f"Updated chunk count for file {db_file_id}: {total_chunks} chunks")
+            processing_start = datetime.now()
 
-                processing_start = datetime.now()
+            async with async_session_maker() as session:
                 for batch_idx, chunk_batch in enumerate(chunk_batches):
                     try:
                         batch_start = datetime.now()
-                        # Generate embeddings for the batch
+
+                        # Embeddings oluşturma ve oluşturulan embeddingler ile knowledge base kayıtlarını yapma
                         embeddings = await self.openai_service.create_embeddings(chunk_batch)
-                        embedding_duration = (datetime.now() - batch_start).total_seconds()
-                        logger.info(f"Generated embeddings for batch {batch_idx + 1}/{len(chunk_batches)} (Duration: {embedding_duration}s)")
 
                         # Create knowledge base entries for the batch
                         batch_entries = []
                         start_idx = batch_idx * self.BATCH_SIZE
+
                         for idx, (chunk, embedding) in enumerate(zip(chunk_batch, embeddings)):
                             kb_entry = KnowledgeBase(
                                 chunk_index=start_idx + idx,
@@ -184,15 +176,37 @@ class DocumentService:
                         # Bulk insert the batch
                         session.add_all(batch_entries)
                         await session.commit()
-                        logger.info(f"Saved batch {batch_idx + 1}/{len(chunk_batches)} to database")
+
+                        batch_duration = (datetime.now() - batch_start).total_seconds()
+                        logger.info(f"Processed and saved batch {batch_idx + 1}/{len(chunk_batches)} (Duration: {batch_duration}s)")
 
                     except Exception as e:
                         logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
                         # Continue with next batch despite errors
                         continue
 
+                # Update chunk count after all batches are processed
+                try:
+                    stmt = select(File).where(File.id == db_file_id)
+                    result = await session.execute(stmt)
+                    db_file = result.scalar_one_or_none()
+
+                    if db_file:
+                        # Count actual chunks in knowledge base
+                        count_stmt = select(func.count(KnowledgeBase.id)).where(
+                            KnowledgeBase.file_id == db_file_id
+                        )
+                        result = await session.execute(count_stmt)
+                        actual_chunk_count = result.scalar()
+
+                        db_file.chunk_count = actual_chunk_count
+                        await session.commit()
+                        logger.info(f"Updated chunk count for file {db_file_id}: {actual_chunk_count} chunks")
+                except Exception as e:
+                    logger.error(f"Error updating chunk count: {str(e)}")
+
                 total_processing_duration = (datetime.now() - processing_start).total_seconds()
-                logger.info(f"Total processing time for {total_chunks} chunks: {total_processing_duration}s")
+                logger.info(f"Total processing time: {total_processing_duration}s")
 
             # Update file status to completed
             await self.update_file_status(db_file_id, FileStatus.COMPLETED)

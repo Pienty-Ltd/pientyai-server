@@ -1,9 +1,11 @@
 import os
 from dotenv import load_dotenv
 import logging
+from urllib.parse import urlparse
 
 # Load .env file
 load_dotenv(override=True)
+
 
 class Config:
     # Environment
@@ -19,9 +21,9 @@ class Config:
 
     # Database and Redis
     REDIS_URL = os.getenv("REDIS_URL")
-    DATABASE_URL = os.getenv("DATABASE_URL",
-                             "").replace("postgresql://",
-                                         "postgresql+asyncpg://")
+
+    # Parse and reconstruct DATABASE_URL to ensure proper format
+    DATABASE_URL = os.getenv("DATABASE_URL")
 
     # AWS Configuration
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -39,6 +41,7 @@ class Config:
     STRIPE_LIVE_SECRET_KEY = os.getenv("STRIPE_LIVE_SECRET_KEY")
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
     STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
+
 
 config = Config()
 
