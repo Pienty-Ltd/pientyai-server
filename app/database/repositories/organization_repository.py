@@ -136,3 +136,91 @@ class OrganizationRepository:
             logger.error(f"Error deleting organization: {str(e)}")
             await self.db.rollback()
             raise
+
+    async def update_organization(self, org_id: int, update_data: dict):
+        """Update organization details"""
+        try:
+            organization = await self.get_organization_by_id(org_id)
+            if not organization:
+                return None
+
+            for key, value in update_data.items():
+                if hasattr(organization, key):
+                    setattr(organization, key, value)
+
+            await self.db.commit()
+            await self.db.refresh(organization)
+            return organization
+
+        except Exception as e:
+            logger.error(f"Error updating organization: {str(e)}")
+            await self.db.rollback()
+            raise
+
+    async def add_user_to_organization(self, org_id: int, user_id: int):
+        """Add a user to an organization"""
+        try:
+            organization = await self.get_organization_by_id(org_id)
+            if not organization:
+                return False
+
+            stmt = select(User).where(User.id == user_id)
+            result = await self.db.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if not user:
+                return False
+
+            organization.users.append(user)
+            await self.db.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error adding user to organization: {str(e)}")
+            await self.db.rollback()
+            raise
+
+    async def remove_user_from_organization(self, org_id: int, user_id: int):
+        """Remove a user from an organization"""
+        try:
+            stmt = text("""
+                DELETE FROM user_organizations
+                WHERE user_id = :user_id AND organization_id = :org_id
+            """)
+            await self.db.execute(stmt, {"user_id": user_id, "org_id": org_id})
+            await self.db.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error removing user from organization: {str(e)}")
+            await self.db.rollback()
+            raise
+
+    async def get_organization_users(self, org_id: int):
+        """Get list of users in an organization"""
+        try:
+            stmt = (
+                select(User)
+                .join(User.organizations)
+                .filter(Organization.id == org_id)
+            )
+            result = await self.db.execute(stmt)
+            return result.scalars().all()
+
+        except Exception as e:
+            logger.error(f"Error fetching organization users: {str(e)}")
+            raise
+
+    async def get_total_organization_files_count(self, org_id: int):
+        """Get total number of files in an organization"""
+        try:
+            stmt = (
+                select(func.count(File.id))
+                .filter(File.organization_id == org_id)
+            )
+            result = await self.db.execute(stmt)
+            return result.scalar()
+
+        except Exception as e:
+            logger.error(f"Error getting organization files count: {str(e)}")
+            raise
