@@ -37,3 +37,7 @@ args = "uvicorn app.main:app --reload --host 0.0.0.0 --port 3348"
 [[ports]]
 localPort = 3348
 externalPort = 80
+
+[[ports]]
+localPort = 5000
+externalPort = 5000

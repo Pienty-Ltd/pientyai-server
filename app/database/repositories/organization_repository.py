@@ -11,10 +11,32 @@ class OrganizationRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def check_user_organization_access(self, user_id: int, organization_id: int) -> bool:
+        """Check if user has access to organization using direct SQL query"""
+        try:
+            # Use text() for raw SQL to ensure proper async execution
+            stmt = text("""
+                SELECT 1
+                FROM users u
+                JOIN user_organizations uo ON u.id = uo.user_id
+                JOIN organizations o ON o.id = uo.organization_id
+                WHERE u.id = :user_id AND o.id = :organization_id
+                LIMIT 1
+            """)
+
+            result = await self.db.execute(
+                stmt,
+                {"user_id": user_id, "organization_id": organization_id}
+            )
+            return result.scalar() is not None
+
+        except Exception as e:
+            logger.error(f"Error checking user organization access: {str(e)}")
+            raise
+
     async def get_organization_by_id(self, org_id: int):
         """Get organization by ID with users preloaded"""
         try:
-            # İlk önce organizasyonu ve kullanıcıları yükle
             stmt = (
                 select(Organization)
                 .options(selectinload(Organization.users))

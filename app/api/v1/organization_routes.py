@@ -36,7 +36,6 @@ class FileResponse(BaseModel):
     file_type: str
     status: str
     created_at: datetime
-    chunks_count: int = 0
 
 class OrganizationDetail(OrganizationResponse):
     total_files: int
@@ -138,20 +137,25 @@ async def get_organization_details(
 ):
     """Organizasyon detaylarını, istatistiklerini ve dosyalarını getirir"""
     try:
+        logger.info(f"Fetching organization details for org_id: {org_id}, user_id: {current_user.id}")
         org_repo = OrganizationRepository(db)
 
         # Get organization details
         organization = await org_repo.get_organization_by_id(org_id)
 
         if not organization:
+            logger.warning(f"Organization not found: {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Organization not found"
             )
 
-        # Check user access
-        user_orgs = await org_repo.get_organizations_by_user(current_user.id)
-        if organization not in user_orgs:
+        # Check user access with SQL query
+        has_access = await org_repo.check_user_organization_access(current_user.id, org_id)
+        logger.info(f"Access check result for user {current_user.id} to org {org_id}: {has_access}")
+
+        if not has_access:
+            logger.warning(f"Access denied: User {current_user.id} attempted to access organization {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this organization"
@@ -175,11 +179,11 @@ async def get_organization_details(
                 filename=f.filename,
                 file_type=f.file_type,
                 status=f.status,
-                created_at=f.created_at,
-                chunks_count=len(f.knowledge_base) if hasattr(f, 'knowledge_base') and f.knowledge_base else 0
+                created_at=f.created_at
             ) for f in files
         ]
 
+        logger.info(f"Successfully retrieved organization details for org_id: {org_id}")
         return BaseResponse(
             success=True,
             data=OrganizationDetail(
@@ -197,7 +201,7 @@ async def get_organization_details(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error fetching organization details: {str(e)}")
+        logger.error(f"Error fetching organization details: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
