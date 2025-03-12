@@ -1,5 +1,7 @@
 {pkgs}: {
   deps = [
+    pkgs.zlib
+    pkgs.xcodebuild
     pkgs.jq
     pkgs.glibcLocales
     pkgs.pkg-config
