@@ -8,15 +8,16 @@ from docx import Document
 from PyPDF2 import PdfReader
 import asyncio
 from app.core.config import config
-from app.database.models.db_models import File, KnowledgeBase, FileStatus, User
-from app.core.services.openai_service import OpenAIService
 from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
-from sqlalchemy import delete, select, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text, CheckConstraint
+from sqlalchemy.sql import func
+from app.database.database_factory import Base, async_session_maker
+from app.core.utils import create_random_key
+from app.database.models.db_models import File, KnowledgeBase, FileStatus, User, Organization, user_organizations
+from app.core.services.openai_service import OpenAIService
 import math
 from datetime import datetime
-
-from app.database.database_factory import async_session_maker
 
 logger = logging.getLogger(__name__)
 
@@ -387,38 +388,49 @@ class DocumentService:
         page: int = 1,
         per_page: int = 20
     ) -> Tuple[List[File], int]:
-        """Get all documents accessible to a user across their organizations"""
+        """Get all documents accessible to a user across their organizations using direct SQL joins"""
         try:
             async with async_session_maker() as session:
-                # Get user's organizations
-                user_stmt = select(User).where(User.id == user_id).options(
-                    joinedload(User.organizations)
+                logger.debug(f"Getting accessible documents for user_id: {user_id}")
+
+                # Get organization IDs using direct join with user_organizations table
+                org_ids_stmt = (
+                    select(Organization.id)
+                    .select_from(user_organizations)
+                    .join(Organization, Organization.id == user_organizations.c.organization_id)
+                    .where(user_organizations.c.user_id == user_id)
                 )
-                result = await session.execute(user_stmt)
-                user = result.unique().scalar_one_or_none()
 
-                if not user:
-                    raise ValueError("User not found")
+                result = await session.execute(org_ids_stmt)
+                org_ids = [row[0] for row in result.fetchall()]
+                logger.debug(f"Found organization IDs for user {user_id}: {org_ids}")
 
-                org_ids = [org.id for org in user.organizations]
+                if not org_ids:
+                    logger.info(f"No organizations found for user {user_id}")
+                    return [], 0
 
-                # Count total documents
-                count_stmt = select(func.count(File.id)).where(
-                    File.organization_id.in_(org_ids)
+                # Count total documents using direct query
+                count_stmt = (
+                    select(func.count(File.id))
+                    .where(File.organization_id.in_(org_ids))
                 )
                 result = await session.execute(count_stmt)
                 total_count = result.scalar()
+                logger.debug(f"Total document count: {total_count}")
 
-                # Get paginated documents without knowledge base
+                # Get paginated documents using direct query
                 offset = (page - 1) * per_page
-                stmt = select(File).where(
-                    File.organization_id.in_(org_ids)
-                ).order_by(
-                    File.created_at.desc()
-                ).offset(offset).limit(per_page)
+                stmt = (
+                    select(File)
+                    .where(File.organization_id.in_(org_ids))
+                    .order_by(desc(File.created_at))
+                    .offset(offset)
+                    .limit(per_page)
+                )
 
                 result = await session.execute(stmt)
                 documents = result.scalars().all()
+                logger.debug(f"Retrieved {len(documents)} documents for page {page}")
 
                 return documents, total_count
 

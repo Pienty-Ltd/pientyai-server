@@ -1,0 +1,37 @@
+2025-03-11 23:52:41,955 - app.api.v1.middlewares.request_logging_middleware - INFO - Request started: GET /api/v1/documents
+2025-03-11 23:52:41,955 - app.api.v1.middlewares.request_logging_middleware - DEBUG - Request details: headers={'host': '46c6dd23-92b6-42e0-8441-207276f1a744-00-ypuyupxvbz8d.riker.replit.dev', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36', 'accept': 'application/json, text/plain, */*', 'accept-encoding': 'gzip, deflate, br, zstd', 'accept-language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7,la;q=0.6', 'authorization': 'Bearer [REDACTED]', 'origin': 'https://53b27c3e-da65-4fbf-9f03-915d7ef74134-00-1xegreh0l3jg3.kirk.replit.dev', 'referer': 'https://53b27c3e-da65-4fbf-9f03-915d7ef74134-00-1xegreh0l3jg3.kirk.replit.dev/', 'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"', 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"', 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'cross-site', 'x-forwarded-for': '176.40.242.146, 10.81.3.205', 'x-forwarded-proto': 'https', 'x-replit-user-bio': '', 'x-replit-user-id': '', 'x-replit-user-name': '', 'x-replit-user-profile-image': '', 'x-replit-user-roles': '', 'x-replit-user-teams': '', 'x-replit-user-url': ''}, query_params={'page': '1', 'per_page': '20'}
+2025-03-11 23:52:41,959 - app.core.security - DEBUG - Successfully decoded token for user: tunaycl@outlook.com
+2025-03-11 23:52:41,959 - app.core.services.redis_service - DEBUG - Created new RedisService instance
+2025-03-11 23:52:41,959 - app.core.services.redis_service - DEBUG - Initializing new Redis connection...
+2025-03-11 23:52:42,603 - app.core.services.redis_service - INFO - Successfully established Redis connection
+2025-03-11 23:52:42,764 - app.core.services.redis_service - DEBUG - Successfully retrieved Redis key: user:user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 23:52:42,764 - app.core.security - INFO - Retrieved user data from Redis cache for fp: user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 23:52:42,764 - app.api.v1.auth - DEBUG - Using cached user data for fp: user_qTSfFwc7HRuRaEqqYwpjiHzdq
+2025-03-11 23:52:43,400 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-03-11 23:52:43,400 - sqlalchemy.engine.Engine - INFO - BEGIN (implicit)
+2025-03-11 23:52:43,456 INFO sqlalchemy.engine.Engine SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at 
+FROM users 
+WHERE users.fp = $1::VARCHAR
+2025-03-11 23:52:43,456 - sqlalchemy.engine.Engine - INFO - SELECT users.id, users.fp, users.email, users.hashed_password, users.full_name, users.role, users.is_active, users.last_login, users.created_at, users.updated_at 
+FROM users 
+WHERE users.fp = $1::VARCHAR
+2025-03-11 23:52:43,472 INFO sqlalchemy.engine.Engine [generated in 0.01625s] ('user_qTSfFwc7HRuRaEqqYwpjiHzdq',)
+2025-03-11 23:52:43,472 - sqlalchemy.engine.Engine - INFO - [generated in 0.01625s] ('user_qTSfFwc7HRuRaEqqYwpjiHzdq',)
+2025-03-11 23:52:44,935 - app.api.v1.middlewares.validation_middleware - INFO - Pagination request: page=1, per_page=20
+2025-03-11 23:52:44,935 - app.api.v1.document_routes - INFO - Fetching documents for user 1, page 1, per_page 20
+2025-03-11 23:52:44,999 - app.core.services.document_service - ERROR - Error fetching user accessible documents: type object 'User' has no attribute 'organizations'
+2025-03-11 23:52:45,000 - app.api.v1.document_routes - ERROR - Error listing user documents: type object 'User' has no attribute 'organizations'
+Traceback (most recent call last):
+  File "/home/runner/workspace/app/api/v1/document_routes.py", line 151, in list_user_documents
+    documents, total_count = await document_service.get_user_accessible_documents(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/workspace/app/core/services/document_service.py", line 395, in get_user_accessible_documents
+    joinedload(User.organizations)
+               ^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'User' has no attribute 'organizations'
+2025-03-11 23:52:45,003 INFO sqlalchemy.engine.Engine ROLLBACK
+2025-03-11 23:52:45,003 - sqlalchemy.engine.Engine - INFO - ROLLBACK
+2025-03-11 23:52:45,162 - app.main - WARNING - HTTP exception: An error occurred while fetching documents
+2025-03-11 23:52:45,162 - app.main - DEBUG - Created standard error detail structure: {'message': 'An error occurred while fetching documents', 'logout': False, 'details': [{'msg': 'An error occurred while fetching documents'}]}
+2025-03-11 23:52:45,163 - app.api.v1.middlewares.request_logging_middleware - INFO - Request completed: GET /api/v1/documents - Status: 500 (Duration: 3.21s)
+INFO:     172.31.128.57:52958 - "GET /api/v1/documents?page=1&per_page=20 HTTP/1.1" 500 Internal Server Error

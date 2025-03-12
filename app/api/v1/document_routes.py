@@ -4,17 +4,19 @@ import logging
 from datetime import datetime
 import mimetypes
 from app.core.services.document_service import DocumentService
-from app.database.models import User, Organization
+from app.database.models import User
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
-from app.schemas.document import DocumentResponse, KnowledgeBaseResponse, PaginatedDocumentResponse
+from app.schemas.document import DocumentResponse, PaginatedDocumentResponse
 from app.database.models.db_models import FileStatus
-from app.api.v1.middlewares.validation_middleware import (
-    validate_pagination_parameters,
-    validate_document_id,
-    validate_organization_id
-)
+from app.api.v1.middlewares.validation_middleware import validate_pagination_parameters
 import math
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database.session import async_session_maker # Assuming this is where async_session_maker is defined
+
+
+# from app.database.models.db_models import user_organizations # Assuming this is where user_organizations is defined
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +134,25 @@ async def process_document_background(
         document_service = DocumentService()
         await document_service.update_file_status(db_file_id, FileStatus.FAILED)
 
+async def check_user_organization_access(db_session: AsyncSession, user_id: int, organization_id: int) -> bool:
+    """Check if user has access to organization using direct SQL query"""
+    try:
+        # Assuming user_organizations table exists and has columns 'user_id' and 'organization_id'
+        stmt = (
+            select(func.count())
+            .select_from(user_organizations)
+            .where(
+                user_organizations.c.user_id == user_id,
+                user_organizations.c.organization_id == organization_id
+            )
+        )
+        result = await db_session.execute(stmt)
+        count = result.scalar()
+        return count > 0
+    except Exception as e:
+        logger.error(f"Error checking organization access: {str(e)}")
+        return False
+
 @router.get("", response_model=BaseResponse[PaginatedDocumentResponse])
 async def list_user_documents(
     request: Request,
@@ -147,7 +168,7 @@ async def list_user_documents(
         logger.info(f"Fetching documents for user {current_user.id}, page {page}, per_page {per_page}")
         start_time = datetime.now()
 
-        document_service = DocumentService()  # No S3 client initialization here
+        document_service = DocumentService()
         documents, total_count = await document_service.get_user_accessible_documents(
             user_id=current_user.id,
             page=page,
@@ -179,6 +200,7 @@ async def list_user_documents(
                 per_page=per_page
             )
         )
+
     except ValueError as ve:
         logger.error(f"Validation error in list_user_documents: {str(ve)}")
         raise HTTPException(
@@ -202,20 +224,20 @@ async def list_organization_documents(
 ):
     """List all documents for a specific organization with pagination"""
     try:
-        # Validate parameters
-        org_id = await validate_organization_id(org_id)
         page, per_page = await validate_pagination_parameters(request, page, per_page)
+
+        logger.info(f"Checking access for user {current_user.id} to organization {org_id}")
+        async with async_session_maker() as session:
+            has_access = await check_user_organization_access(session, current_user.id, org_id)
+            if not has_access:
+                logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
 
         logger.info(f"Fetching documents for organization {org_id}, page {page}, per_page {per_page}")
         start_time = datetime.now()
-
-        # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
 
         document_service = DocumentService()
         documents, total_count = await document_service.get_organization_documents_paginated(
@@ -267,16 +289,18 @@ async def get_document(
 ):
     """Get a specific document by ID"""
     try:
+        logger.info(f"Checking access for user {current_user.id} to organization {org_id}")
+        async with async_session_maker() as session:
+            has_access = await check_user_organization_access(session, current_user.id, org_id)
+            if not has_access:
+                logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_id} in org {org_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
+
         logger.info(f"Fetching document {document_id} from organization {org_id}")
         start_time = datetime.now()
-
-        # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_id} in org {org_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
 
         document_service = DocumentService()
         document = await document_service.get_document_by_id(org_id, document_id)
@@ -325,13 +349,14 @@ async def delete_document(
         logger.info(f"Attempting to delete document {document_id} from organization {org_id}")
         start_time = datetime.now()
 
-        # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to delete document {document_id} in org {org_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
+        async with async_session_maker() as session:
+            has_access = await check_user_organization_access(session, current_user.id, org_id)
+            if not has_access:
+                logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
 
         document_service = DocumentService()
         success = await document_service.delete_document(org_id, document_id)
@@ -369,10 +394,19 @@ async def upload_document(
 ):
     """Upload and process a document for knowledge base"""
     try:
+        logger.info(f"Checking access for user {current_user.id} to organization {organization_id}")
+        async with async_session_maker() as session:
+            has_access = await check_user_organization_access(session, current_user.id, organization_id)
+            if not has_access:
+                logger.warning(f"Access denied: User {current_user.id} attempted to upload to org {organization_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
+
         logger.info(f"Processing upload request for file {file.filename} to organization {organization_id}")
         start_time = datetime.now()
 
-        # Enhanced file validation
         try:
             file_type = await validate_file_upload(file)
         except HTTPException as e:
@@ -383,14 +417,6 @@ async def upload_document(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file format or corrupted file"
-            )
-
-        # Check if user has access to organization
-        if not any(org.id == organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to upload to org {organization_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
             )
 
         # Read file content
@@ -457,13 +483,14 @@ async def search_documents(
         logger.info(f"Searching documents in organization {organization_id} with query '{query}', limit {limit}")
         start_time = datetime.now()
 
-        # Check if user has access to organization
-        if not any(org.id == organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to search in org {organization_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
+        async with async_session_maker() as session:
+            has_access = await check_user_organization_access(session, current_user.id, organization_id)
+            if not has_access:
+                logger.warning(f"Access denied: User {current_user.id} attempted to access org {organization_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
 
         document_service = DocumentService()
         results = await document_service.search_documents(
