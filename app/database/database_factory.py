@@ -5,27 +5,17 @@ import logging
 import os
 from pathlib import Path
 from sqlalchemy import text
-from app.core.config import config
 from app.database.utils import execute_sql_commands
 
 logger = logging.getLogger(__name__)
 
-# Use the DATABASE_URL from environment
 DATABASE_URL = config.DATABASE_URL
 
-# Create async engine with echo for SQL logging
-engine = create_async_engine(DATABASE_URL,
-                             echo=True,
-                             pool_pre_ping=True,
-                             pool_size=20,
-                             max_overflow=10)
-
-# Create async session maker
+engine = create_async_engine(DATABASE_URL, echo=True)
 async_session_maker = async_sessionmaker(autocommit=False,
                                          autoflush=False,
                                          bind=engine,
                                          class_=AsyncSession)
-
 Base = declarative_base()
 
 

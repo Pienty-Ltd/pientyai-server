@@ -51,7 +51,7 @@ class DashboardStatsRepository:
 
             logger.debug("Cache miss, querying database...")
 
-            # Query materialized view directly without joins
+            # Try to get stats from materialized view
             try:
                 logger.debug("Querying materialized view...")
                 async with self.db.begin() as transaction:
@@ -68,7 +68,7 @@ class DashboardStatsRepository:
                 logger.info(f"No stats found for user_id {user_id}")
                 return None
 
-            # Convert row to DashboardStats without loading relationships
+            # Convert materialized view row to DashboardStats
             stats = DashboardStats(
                 user_id=row.user_id,
                 total_knowledge_base_count=row.total_knowledge_base_count,
@@ -103,7 +103,7 @@ class DashboardStatsRepository:
 
             logger.debug("Cache miss, querying database...")
 
-            # Query materialized view directly without joins
+            # Try to get stats from materialized view first
             try:
                 logger.debug("Querying materialized view...")
                 async with self.db.begin() as transaction:
@@ -114,20 +114,35 @@ class DashboardStatsRepository:
                     logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
-                return None
+                row = None
 
             if not row:
-                logger.info(f"No stats found for organization_id {organization_id}")
-                return None
-
-            # Convert row to DashboardStats without loading relationships
-            stats = DashboardStats(
-                organization_id=row.organization_id,
-                total_knowledge_base_count=row.total_knowledge_base_count,
-                total_file_count=row.total_file_count,
-                total_storage_used=row.total_storage_used,
-                last_activity_date=row.last_activity_date
-            )
+                logger.info("No data in materialized view, updating stats...")
+                try:
+                    async with self.db.begin() as transaction:
+                        # Update stats for this organization
+                        await transaction.execute(text("""
+                            SELECT update_organization_stats(:organization_id)
+                        """), {"organization_id": organization_id})
+                        # Get updated stats
+                        result = await transaction.execute(
+                            select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
+                        )
+                        stats = result.scalar_one_or_none()
+                        logger.debug(f"Direct query result: {stats}")
+                except Exception as e:
+                    logger.error(f"Error updating organization stats: {str(e)}\n{traceback.format_exc()}")
+                    return None
+            else:
+                logger.debug("Converting materialized view row to DashboardStats")
+                # Convert materialized view row to DashboardStats
+                stats = DashboardStats(
+                    organization_id=row.organization_id,
+                    total_knowledge_base_count=row.total_knowledge_base_count,
+                    total_file_count=row.total_file_count,
+                    total_storage_used=row.total_storage_used,
+                    last_activity_date=row.last_activity_date
+                )
 
             if stats:
                 logger.info(f"Found stats for organization_id {organization_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
