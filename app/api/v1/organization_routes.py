@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel
 import logging
 import math
+from sqlalchemy.sql import text
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
 from app.database.models.db_models import User, Organization, UserRole, File, FileStatus
 from app.database.repositories.organization_repository import OrganizationRepository
+from app.api.v1.middlewares.validation_middleware import validate_organization_access, validate_organization_id
 
 router = APIRouter(
     prefix="/api/v1/organizations",
@@ -138,23 +140,20 @@ async def get_organization_details(
 ):
     """Organizasyon detaylarını, istatistiklerini ve dosyalarını getirir"""
     try:
-        org_repo = OrganizationRepository(db)
+        # First validate the organization ID
+        await validate_organization_id(org_id)
 
-        # Get organization details
+        # Then validate user's access to the organization
+        await validate_organization_access(db, current_user.id, org_id)
+
+        # Get organization details using repository
+        org_repo = OrganizationRepository(db)
         organization = await org_repo.get_organization_by_id(org_id)
 
         if not organization:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Organization not found"
-            )
-
-        # Check user access
-        user_orgs = await org_repo.get_organizations_by_user(current_user.id)
-        if organization not in user_orgs:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this organization"
             )
 
         # Get organization files separately
@@ -174,9 +173,9 @@ async def get_organization_details(
                 id=f.id,
                 filename=f.filename,
                 file_type=f.file_type,
-                status=f.status,
+                status=f.status.value,  # Convert enum to string
                 created_at=f.created_at,
-                chunks_count=len(f.knowledge_base) if hasattr(f, 'knowledge_base') and f.knowledge_base else 0
+                chunks_count=f.chunk_count if hasattr(f, 'chunk_count') else 0
             ) for f in files
         ]
 
@@ -194,6 +193,7 @@ async def get_organization_details(
                 files=file_responses
             )
         )
+
     except HTTPException as e:
         raise e
     except Exception as e:
