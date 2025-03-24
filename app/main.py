@@ -13,6 +13,7 @@ from app.api.v1.payment_routes import router as payment_router
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.document_routes import router as document_router
 from app.api.v1.dashboard_routes import router as dashboard_router
+from app.api.v1.invitation_routes import router as invitation_router
 from app.api.v1 import router as v1_router
 from app.core.config import config
 from app.database.database_factory import create_tables, get_db
@@ -53,6 +54,7 @@ app.include_router(payment_router)
 app.include_router(admin_router)
 app.include_router(document_router)
 app.include_router(dashboard_router)
+app.include_router(invitation_router)
 app.include_router(v1_router)
 
 

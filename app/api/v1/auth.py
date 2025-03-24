@@ -11,6 +11,7 @@ from app.schemas.response import LoginResponse, TokenResponse
 from app.schemas.request import LoginRequest, RegisterRequest
 from app.database.database_factory import get_db
 from app.database.repositories.user_repository import UserRepository
+from app.database.repositories.invitation_repository import InvitationRepository
 from app.core.security import (get_password_hash, verify_password,
                              create_access_token, decode_access_token,
                              cache_user_data, get_cached_user_data, create_tokens, decode_refresh_token)
@@ -112,6 +113,26 @@ class RefreshTokenRequest(BaseModel):
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Register a new user"""
     try:
+        # Check invitation code first
+        invitation_repo = InvitationRepository(db)
+        invitation_code = await invitation_repo.get_invitation_code(request.invitation_code)
+        
+        if not invitation_code:
+            logger.warning(f"Invalid invitation code used during registration: {request.invitation_code}")
+            return BaseResponse(
+                success=False,
+                message="Registration failed",
+                error=ErrorResponse(message="Invalid invitation code")
+            )
+            
+        if invitation_code.is_used:
+            logger.warning(f"Attempt to use already used invitation code: {request.invitation_code}")
+            return BaseResponse(
+                success=False,
+                message="Registration failed",
+                error=ErrorResponse(message="This invitation code has already been used")
+            )
+        
         user_repo = UserRepository(db)
 
         # Create new user
@@ -132,6 +153,9 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
                 message="Registration failed",
                 error=ErrorResponse(message="Email already registered or database error")
             )
+            
+        # Mark invitation code as used
+        await invitation_repo.mark_as_used(request.invitation_code, user.id)
 
         # Cache user data
         user_cache_data = {
@@ -150,7 +174,7 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "fp": user.fp
         })
 
-        logger.info(f"Successfully registered user: {user.email}")
+        logger.info(f"Successfully registered user: {user.email} with invitation code: {request.invitation_code}")
         return BaseResponse(
             success=True,
             data=LoginResponse(
