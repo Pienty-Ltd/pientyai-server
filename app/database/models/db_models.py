@@ -67,6 +67,8 @@ class Organization(Base):
     __tablename__ = "organizations"
 
     id = Column(Integer, primary_key=True, index=True)
+    fp = Column(String, unique=True, index=True, nullable=False, 
+                default=lambda: f"org_{create_random_key(25)}")
     name = Column(String, nullable=False)
     description = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
