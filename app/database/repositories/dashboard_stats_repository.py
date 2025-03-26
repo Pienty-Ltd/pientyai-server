@@ -69,49 +69,48 @@ class DashboardStatsRepository:
             if not row:
                 logger.info(f"No stats in materialized view for user_id {user_id}, calculating directly...")
                 try:
-                    # Direct calculation of statistics
-                    async with self.db.begin() as transaction:
-                        # Calculate total knowledge base count for user's organizations
-                        kb_result = await transaction.execute(text("""
-                            SELECT COUNT(*) as kb_count FROM knowledge_base kb
-                            JOIN organizations o ON kb.organization_id = o.id
-                            JOIN user_organizations uo ON o.id = uo.organization_id
-                            WHERE uo.user_id = :user_id
-                        """), {"user_id": user_id})
-                        kb_count = kb_result.scalar() or 0
-                        
-                        # Calculate total file count for user's organizations
-                        file_result = await transaction.execute(text("""
-                            SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
-                            FROM files f
-                            JOIN organizations o ON f.organization_id = o.id
-                            JOIN user_organizations uo ON o.id = uo.organization_id
-                            WHERE uo.user_id = :user_id
-                        """), {"user_id": user_id})
-                        file_row = file_result.fetchone()
-                        file_count = file_row.file_count if file_row else 0
-                        total_size = file_row.total_size if file_row else 0
-                        
-                        # Get last activity date
-                        activity_result = await transaction.execute(text("""
-                            SELECT MAX(f.created_at) as last_activity
-                            FROM files f
-                            JOIN organizations o ON f.organization_id = o.id
-                            JOIN user_organizations uo ON o.id = uo.organization_id
-                            WHERE uo.user_id = :user_id
-                        """), {"user_id": user_id})
-                        last_activity = activity_result.scalar()
-                        
-                        # Create stats object
-                        stats = DashboardStats(
-                            user_id=user_id,
-                            total_knowledge_base_count=kb_count,
-                            total_file_count=file_count,
-                            total_storage_used=total_size,
-                            last_activity_date=last_activity
-                        )
-                        
-                        logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
+                    # Direct calculation of statistics using existing connection without begin()
+                    # Calculate total knowledge base count for user's organizations
+                    kb_result = await self.db.execute(text("""
+                        SELECT COUNT(*) as kb_count FROM knowledge_base kb
+                        JOIN organizations o ON kb.organization_id = o.id
+                        JOIN user_organizations uo ON o.id = uo.organization_id
+                        WHERE uo.user_id = :user_id
+                    """), {"user_id": user_id})
+                    kb_count = kb_result.scalar() or 0
+                    
+                    # Calculate total file count for user's organizations
+                    file_result = await self.db.execute(text("""
+                        SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
+                        FROM files f
+                        JOIN organizations o ON f.organization_id = o.id
+                        JOIN user_organizations uo ON o.id = uo.organization_id
+                        WHERE uo.user_id = :user_id
+                    """), {"user_id": user_id})
+                    file_row = file_result.fetchone()
+                    file_count = file_row.file_count if file_row else 0
+                    total_size = file_row.total_size if file_row else 0
+                    
+                    # Get last activity date
+                    activity_result = await self.db.execute(text("""
+                        SELECT MAX(f.created_at) as last_activity
+                        FROM files f
+                        JOIN organizations o ON f.organization_id = o.id
+                        JOIN user_organizations uo ON o.id = uo.organization_id
+                        WHERE uo.user_id = :user_id
+                    """), {"user_id": user_id})
+                    last_activity = activity_result.scalar()
+                    
+                    # Create stats object
+                    stats = DashboardStats(
+                        user_id=user_id,
+                        total_knowledge_base_count=kb_count,
+                        total_file_count=file_count,
+                        total_storage_used=total_size,
+                        last_activity_date=last_activity
+                    )
+                    
+                    logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
                 except Exception as e:
                     logger.error(f"Error calculating stats directly: {str(e)}\n{traceback.format_exc()}")
                     # Create default stats object with zeros
@@ -151,7 +150,7 @@ class DashboardStatsRepository:
                 last_activity_date=None
             )
 
-    async def get_organization_stats(self, organization_id: int) -> Optional[DashboardStats]:
+    async def get_organization_stats(self, organization_id: int) -> DashboardStats:
         """Get dashboard statistics for a specific organization with caching"""
         try:
             logger.info(f"Fetching stats for organization_id: {organization_id}")
@@ -163,111 +162,64 @@ class DashboardStatsRepository:
                 logger.info(f"Returning cached stats for organization_id: {organization_id}")
                 return cached_stats
 
-            logger.debug("Cache miss, querying database...")
+            # Create default stats in case we can't get any data
+            default_stats = DashboardStats(
+                organization_id=organization_id,
+                total_knowledge_base_count=0,
+                total_file_count=0,
+                total_storage_used=0,
+                last_activity_date=None
+            )
 
-            # Try to get stats from materialized view first
-            row = None
+            # Try direct calculation - simpler approach to avoid nested transactions
             try:
-                logger.debug("Querying materialized view...")
-                async with self.db.begin() as transaction:
-                    result = await transaction.execute(text("""
-                        SELECT * FROM mv_organization_stats WHERE organization_id = :organization_id
-                    """), {"organization_id": organization_id})
-                    row = result.fetchone()
-                    logger.debug(f"Materialized view query result: {row}")
-            except Exception as e:
-                logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
-                # Continue with direct calculation
-
-            stats = None
-            if not row:
-                logger.info(f"No stats in materialized view for organization_id {organization_id}, calculating directly...")
-                try:
-                    # Direct calculation of statistics
-                    async with self.db.begin() as transaction:
-                        # Calculate total knowledge base count
-                        kb_result = await transaction.execute(text("""
-                            SELECT COUNT(*) as kb_count FROM knowledge_base 
-                            WHERE organization_id = :organization_id
-                        """), {"organization_id": organization_id})
-                        kb_count = kb_result.scalar() or 0
-                        
-                        # Calculate total file count and storage
-                        file_result = await transaction.execute(text("""
-                            SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
-                            FROM files 
-                            WHERE organization_id = :organization_id
-                        """), {"organization_id": organization_id})
-                        file_row = file_result.fetchone()
-                        file_count = file_row.file_count if file_row else 0
-                        total_size = file_row.total_size if file_row else 0
-                        
-                        # Get last activity date
-                        activity_result = await transaction.execute(text("""
-                            SELECT MAX(created_at) as last_activity
-                            FROM files 
-                            WHERE organization_id = :organization_id
-                        """), {"organization_id": organization_id})
-                        last_activity = activity_result.scalar()
-                        
-                        # Create stats object
-                        stats = DashboardStats(
-                            organization_id=organization_id,
-                            total_knowledge_base_count=kb_count,
-                            total_file_count=file_count,
-                            total_storage_used=total_size,
-                            last_activity_date=last_activity
-                        )
-                        
-                        logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
-                        
-                        # Try to update the dashboard_stats table with our calculation
-                        try:
-                            await self.db.merge(stats)
-                            await self.db.commit()
-                        except Exception as e:
-                            logger.error(f"Error saving calculated stats: {str(e)}")
-                            # Continue anyway as we already have the stats object
-                except Exception as e:
-                    logger.error(f"Error calculating organization stats directly: {str(e)}\n{traceback.format_exc()}")
-                    # Create default stats object with zeros
-                    stats = DashboardStats(
-                        organization_id=organization_id,
-                        total_knowledge_base_count=0,
-                        total_file_count=0,
-                        total_storage_used=0,
-                        last_activity_date=None
-                    )
-            else:
-                logger.debug("Converting materialized view row to DashboardStats")
-                # Convert materialized view row to DashboardStats
-                stats = DashboardStats(
-                    organization_id=row.organization_id,
-                    total_knowledge_base_count=row.total_knowledge_base_count,
-                    total_file_count=row.total_file_count,
-                    total_storage_used=row.total_storage_used,
-                    last_activity_date=row.last_activity_date
-                )
-
-            if stats:
-                logger.info(f"Found stats for organization_id {organization_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
-                await self._set_cache(cache_key, stats)
-            else:
-                logger.warning(f"No stats found for organization_id {organization_id}")
-                # Create default stats object if we somehow still don't have one
+                # Calculate total knowledge base count
+                kb_result = await self.db.execute(text("""
+                    SELECT COUNT(*) as kb_count FROM knowledge_base 
+                    WHERE organization_id = :organization_id
+                """), {"organization_id": organization_id})
+                kb_count = kb_result.scalar() or 0
+                
+                # Calculate total file count and storage
+                file_result = await self.db.execute(text("""
+                    SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
+                    FROM files 
+                    WHERE organization_id = :organization_id
+                """), {"organization_id": organization_id})
+                file_row = file_result.fetchone()
+                file_count = file_row.file_count if file_row else 0
+                total_size = file_row.total_size if file_row else 0
+                
+                # Get last activity date
+                activity_result = await self.db.execute(text("""
+                    SELECT MAX(created_at) as last_activity
+                    FROM files 
+                    WHERE organization_id = :organization_id
+                """), {"organization_id": organization_id})
+                last_activity = activity_result.scalar()
+                
+                # Create stats object
                 stats = DashboardStats(
                     organization_id=organization_id,
-                    total_knowledge_base_count=0,
-                    total_file_count=0,
-                    total_storage_used=0,
-                    last_activity_date=None
+                    total_knowledge_base_count=kb_count,
+                    total_file_count=file_count,
+                    total_storage_used=total_size,
+                    last_activity_date=last_activity
                 )
-
-            return stats
-
+                
+                logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
+                
+                # Cache the result
+                await self._set_cache(cache_key, stats)
+                return stats
+                
+            except Exception as e:
+                logger.error(f"Error calculating organization stats: {str(e)}\n{traceback.format_exc()}")
+                return default_stats
+                
         except Exception as e:
             logger.error(f"Error in get_organization_stats: {str(e)}\n{traceback.format_exc()}")
-            # Return default stats instead of None
+            # Return default stats in case of any error
             return DashboardStats(
                 organization_id=organization_id,
                 total_knowledge_base_count=0,
