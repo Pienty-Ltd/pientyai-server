@@ -75,7 +75,15 @@ async def get_dashboard_data(
             logger.info(f"User stats retrieved: {user_stats}")
         except Exception as e:
             logger.error(f"Error fetching user stats: {str(e)}", exc_info=True)
-            user_stats = None
+            # Create an empty stats object instead of using None
+            from app.database.models.db_models import DashboardStats
+            user_stats = DashboardStats(
+                user_id=current_user.id,
+                total_knowledge_base_count=0,
+                total_file_count=0,
+                total_storage_used=0,
+                last_activity_date=None
+            )
 
         # Prepare organization info list with stats
         org_info_list = []
@@ -84,14 +92,15 @@ async def get_dashboard_data(
         for org in organizations:
             try:
                 org_stats = await stats_repo.get_organization_stats(org.id)
+                # org_stats will never be None now due to our updates to get_organization_stats
                 org_info = OrganizationInfo(
                     id=org.id,
                     name=org.name,
                     created_at=org.created_at,
-                    total_knowledge_base_count=org_stats.total_knowledge_base_count if org_stats else 0,
-                    total_file_count=org_stats.total_file_count if org_stats else 0,
-                    total_storage_used=org_stats.total_storage_used if org_stats else 0,
-                    last_activity_date=org_stats.last_activity_date if org_stats else None
+                    total_knowledge_base_count=org_stats.total_knowledge_base_count,
+                    total_file_count=org_stats.total_file_count,
+                    total_storage_used=org_stats.total_storage_used,
+                    last_activity_date=org_stats.last_activity_date
                 )
                 org_info_list.append(org_info)
 
@@ -106,15 +115,13 @@ async def get_dashboard_data(
         if organization_id and not current_org and org_info_list:
             current_org = org_info_list[0]
 
-        # Prepare user stats dictionary
-        user_stats_dict = None
-        if user_stats:
-            user_stats_dict = {
-                "total_knowledge_base_count": user_stats.total_knowledge_base_count,
-                "total_file_count": user_stats.total_file_count,
-                "total_storage_used": user_stats.total_storage_used,
-                "last_activity_date": user_stats.last_activity_date
-            }
+        # Prepare user stats dictionary - user_stats will never be None now due to our updates
+        user_stats_dict = {
+            "total_knowledge_base_count": user_stats.total_knowledge_base_count,
+            "total_file_count": user_stats.total_file_count,
+            "total_storage_used": user_stats.total_storage_used,
+            "last_activity_date": user_stats.last_activity_date
+        }
 
         # Set default current organization if none is selected
         if not current_org and org_info_list:

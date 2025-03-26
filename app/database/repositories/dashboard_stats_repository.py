@@ -51,7 +51,8 @@ class DashboardStatsRepository:
 
             logger.debug("Cache miss, querying database...")
 
-            # Try to get stats from materialized view
+            # Try to get stats from materialized view first
+            row = None
             try:
                 logger.debug("Querying materialized view...")
                 async with self.db.begin() as transaction:
@@ -62,20 +63,74 @@ class DashboardStatsRepository:
                     logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
-                return None
-
+                # We'll try direct calculation instead of returning None
+            
+            # If materialized view doesn't exist or has no data, calculate stats directly
             if not row:
-                logger.info(f"No stats found for user_id {user_id}")
-                return None
-
-            # Convert materialized view row to DashboardStats
-            stats = DashboardStats(
-                user_id=row.user_id,
-                total_knowledge_base_count=row.total_knowledge_base_count,
-                total_file_count=row.total_file_count,
-                total_storage_used=row.total_storage_used,
-                last_activity_date=row.last_activity_date
-            )
+                logger.info(f"No stats in materialized view for user_id {user_id}, calculating directly...")
+                try:
+                    # Direct calculation of statistics
+                    async with self.db.begin() as transaction:
+                        # Calculate total knowledge base count for user's organizations
+                        kb_result = await transaction.execute(text("""
+                            SELECT COUNT(*) as kb_count FROM knowledge_base kb
+                            JOIN organizations o ON kb.organization_id = o.id
+                            JOIN user_organizations uo ON o.id = uo.organization_id
+                            WHERE uo.user_id = :user_id
+                        """), {"user_id": user_id})
+                        kb_count = kb_result.scalar() or 0
+                        
+                        # Calculate total file count for user's organizations
+                        file_result = await transaction.execute(text("""
+                            SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
+                            FROM files f
+                            JOIN organizations o ON f.organization_id = o.id
+                            JOIN user_organizations uo ON o.id = uo.organization_id
+                            WHERE uo.user_id = :user_id
+                        """), {"user_id": user_id})
+                        file_row = file_result.fetchone()
+                        file_count = file_row.file_count if file_row else 0
+                        total_size = file_row.total_size if file_row else 0
+                        
+                        # Get last activity date
+                        activity_result = await transaction.execute(text("""
+                            SELECT MAX(f.created_at) as last_activity
+                            FROM files f
+                            JOIN organizations o ON f.organization_id = o.id
+                            JOIN user_organizations uo ON o.id = uo.organization_id
+                            WHERE uo.user_id = :user_id
+                        """), {"user_id": user_id})
+                        last_activity = activity_result.scalar()
+                        
+                        # Create stats object
+                        stats = DashboardStats(
+                            user_id=user_id,
+                            total_knowledge_base_count=kb_count,
+                            total_file_count=file_count,
+                            total_storage_used=total_size,
+                            last_activity_date=last_activity
+                        )
+                        
+                        logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
+                except Exception as e:
+                    logger.error(f"Error calculating stats directly: {str(e)}\n{traceback.format_exc()}")
+                    # Create default stats object with zeros
+                    stats = DashboardStats(
+                        user_id=user_id,
+                        total_knowledge_base_count=0,
+                        total_file_count=0,
+                        total_storage_used=0,
+                        last_activity_date=None
+                    )
+            else:
+                # Convert materialized view row to DashboardStats
+                stats = DashboardStats(
+                    user_id=row.user_id,
+                    total_knowledge_base_count=row.total_knowledge_base_count,
+                    total_file_count=row.total_file_count,
+                    total_storage_used=row.total_storage_used,
+                    last_activity_date=row.last_activity_date
+                )
 
             if stats:
                 logger.info(f"Found stats for user_id {user_id}: kb_count={stats.total_knowledge_base_count}, file_count={stats.total_file_count}")
@@ -87,7 +142,14 @@ class DashboardStatsRepository:
 
         except Exception as e:
             logger.error(f"Error in get_user_stats: {str(e)}\n{traceback.format_exc()}")
-            return None
+            # Return empty stats object instead of None
+            return DashboardStats(
+                user_id=user_id,
+                total_knowledge_base_count=0,
+                total_file_count=0,
+                total_storage_used=0,
+                last_activity_date=None
+            )
 
     async def get_organization_stats(self, organization_id: int) -> Optional[DashboardStats]:
         """Get dashboard statistics for a specific organization with caching"""
@@ -104,6 +166,7 @@ class DashboardStatsRepository:
             logger.debug("Cache miss, querying database...")
 
             # Try to get stats from materialized view first
+            row = None
             try:
                 logger.debug("Querying materialized view...")
                 async with self.db.begin() as transaction:
@@ -114,25 +177,67 @@ class DashboardStatsRepository:
                     logger.debug(f"Materialized view query result: {row}")
             except Exception as e:
                 logger.error(f"Error querying materialized view: {str(e)}\n{traceback.format_exc()}")
-                row = None
+                # Continue with direct calculation
 
+            stats = None
             if not row:
-                logger.info("No data in materialized view, updating stats...")
+                logger.info(f"No stats in materialized view for organization_id {organization_id}, calculating directly...")
                 try:
+                    # Direct calculation of statistics
                     async with self.db.begin() as transaction:
-                        # Update stats for this organization
-                        await transaction.execute(text("""
-                            SELECT update_organization_stats(:organization_id)
+                        # Calculate total knowledge base count
+                        kb_result = await transaction.execute(text("""
+                            SELECT COUNT(*) as kb_count FROM knowledge_base 
+                            WHERE organization_id = :organization_id
                         """), {"organization_id": organization_id})
-                        # Get updated stats
-                        result = await transaction.execute(
-                            select(DashboardStats).filter(DashboardStats.organization_id == organization_id)
+                        kb_count = kb_result.scalar() or 0
+                        
+                        # Calculate total file count and storage
+                        file_result = await transaction.execute(text("""
+                            SELECT COUNT(*) as file_count, COALESCE(SUM(file_size), 0) as total_size 
+                            FROM files 
+                            WHERE organization_id = :organization_id
+                        """), {"organization_id": organization_id})
+                        file_row = file_result.fetchone()
+                        file_count = file_row.file_count if file_row else 0
+                        total_size = file_row.total_size if file_row else 0
+                        
+                        # Get last activity date
+                        activity_result = await transaction.execute(text("""
+                            SELECT MAX(created_at) as last_activity
+                            FROM files 
+                            WHERE organization_id = :organization_id
+                        """), {"organization_id": organization_id})
+                        last_activity = activity_result.scalar()
+                        
+                        # Create stats object
+                        stats = DashboardStats(
+                            organization_id=organization_id,
+                            total_knowledge_base_count=kb_count,
+                            total_file_count=file_count,
+                            total_storage_used=total_size,
+                            last_activity_date=last_activity
                         )
-                        stats = result.scalar_one_or_none()
-                        logger.debug(f"Direct query result: {stats}")
+                        
+                        logger.info(f"Calculated stats directly: kb_count={kb_count}, file_count={file_count}")
+                        
+                        # Try to update the dashboard_stats table with our calculation
+                        try:
+                            await self.db.merge(stats)
+                            await self.db.commit()
+                        except Exception as e:
+                            logger.error(f"Error saving calculated stats: {str(e)}")
+                            # Continue anyway as we already have the stats object
                 except Exception as e:
-                    logger.error(f"Error updating organization stats: {str(e)}\n{traceback.format_exc()}")
-                    return None
+                    logger.error(f"Error calculating organization stats directly: {str(e)}\n{traceback.format_exc()}")
+                    # Create default stats object with zeros
+                    stats = DashboardStats(
+                        organization_id=organization_id,
+                        total_knowledge_base_count=0,
+                        total_file_count=0,
+                        total_storage_used=0,
+                        last_activity_date=None
+                    )
             else:
                 logger.debug("Converting materialized view row to DashboardStats")
                 # Convert materialized view row to DashboardStats
@@ -149,12 +254,27 @@ class DashboardStatsRepository:
                 await self._set_cache(cache_key, stats)
             else:
                 logger.warning(f"No stats found for organization_id {organization_id}")
+                # Create default stats object if we somehow still don't have one
+                stats = DashboardStats(
+                    organization_id=organization_id,
+                    total_knowledge_base_count=0,
+                    total_file_count=0,
+                    total_storage_used=0,
+                    last_activity_date=None
+                )
 
             return stats
 
         except Exception as e:
             logger.error(f"Error in get_organization_stats: {str(e)}\n{traceback.format_exc()}")
-            return None
+            # Return default stats instead of None
+            return DashboardStats(
+                organization_id=organization_id,
+                total_knowledge_base_count=0,
+                total_file_count=0,
+                total_storage_used=0,
+                last_activity_date=None
+            )
 
     async def update_stats(self, batch_size: int = 1000) -> None:
         """Update all dashboard statistics using materialized views and batching"""
