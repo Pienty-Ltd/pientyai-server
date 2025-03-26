@@ -72,12 +72,19 @@ async def create_tables():
     try:
         async with engine.begin() as conn:
             # Import all models here to ensure they're registered with SQLAlchemy
-            from app.database.models import (User, Organization,
-                                             UserSubscription, PaymentHistory,
-                                             PromoCode, PromoCodeUsage,
-                                             UserRole, PaymentStatus,
-                                             SubscriptionStatus, File,
-                                             KnowledgeBase, FileStatus)
+            from app.database.models import db_models
+            from app.database.models import invitation
+            from app.database.models import promo_code
+            
+            # For debugging: first drop all tables if they exist
+            try:
+                await conn.run_sync(Base.metadata.drop_all)
+                logger.info("Dropped existing tables")
+            except Exception as drop_error:
+                logger.error(f"Error dropping existing tables: {str(drop_error)}")
+                # Continue anyway
+            
+            # Create all tables fresh
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Successfully created database tables")
 
