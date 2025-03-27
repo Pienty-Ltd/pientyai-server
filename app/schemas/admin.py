@@ -49,6 +49,13 @@ class PaginatedUserFileResponse(BaseModel):
     current_page: int
     per_page: int
 
+class PaginatedOrganizationResponse(BaseModel):
+    organizations: List[OrganizationListResponse]
+    total_count: int
+    total_pages: int
+    current_page: int
+    per_page: int
+
 class UpdateUserRequest(BaseModel):
     full_name: Optional[str] = None
     is_active: Optional[bool] = None

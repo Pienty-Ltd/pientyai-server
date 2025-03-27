@@ -149,24 +149,35 @@ class UserRepository:
             logger.error(f"Error getting paginated users: {str(e)}")
             raise
             
-    async def get_user_organizations(self, user_fp: str) -> List[Organization]:
+    async def get_user_organizations_paginated(self, user_fp: str, page: int = 1, per_page: int = 20) -> Tuple[List[Organization], int]:
         """
-        Get all organizations a user belongs to
+        Get all organizations a user belongs to with pagination
         
         Args:
             user_fp: User fingerprint
+            page: Page number (starting from 1)
+            per_page: Number of items per page
             
         Returns:
-            List of organizations
+            Tuple of (list of organizations, total count)
         """
         try:
             user = await self.get_user_by_fp(user_fp)
             if not user:
                 logger.warning(f"Cannot get organizations for non-existent user: {user_fp}")
-                return []
+                return [], 0
                 
             # Organizations are already loaded with lazy="selectin"
-            return user.organizations
+            all_organizations = user.organizations
+            total_count = len(all_organizations)
+            
+            # Manual pagination as we already have all organizations in memory
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            
+            paginated_organizations = all_organizations[start_idx:end_idx]
+            
+            return paginated_organizations, total_count
             
         except Exception as e:
             logger.error(f"Error getting user organizations: {str(e)}")
