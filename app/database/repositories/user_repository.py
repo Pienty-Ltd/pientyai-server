@@ -1,10 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
-from app.database.models.db_models import User, UserRole
+from sqlalchemy import func, desc
+from app.database.models.db_models import User, UserRole, File, Organization
 from app.core.security import get_password_hash
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -110,4 +112,104 @@ class UserRepository:
 
         except Exception as e:
             logger.error(f"Error creating User instance from cache: {str(e)}")
+            raise
+            
+    async def get_users_paginated(self, page: int = 1, per_page: int = 20) -> Tuple[List[User], int]:
+        """
+        Get all users with pagination
+        
+        Args:
+            page: Page number (starting from 1)
+            per_page: Number of items per page
+            
+        Returns:
+            Tuple of (list of users, total count)
+        """
+        try:
+            # Count total users
+            count_stmt = select(func.count(User.id))
+            result = await self.db.execute(count_stmt)
+            total_count = result.scalar() or 0
+            
+            # Get paginated users
+            offset = (page - 1) * per_page
+            stmt = (
+                select(User)
+                .order_by(desc(User.created_at))
+                .offset(offset)
+                .limit(per_page)
+            )
+            
+            result = await self.db.execute(stmt)
+            users = result.scalars().all()
+            
+            return users, total_count
+            
+        except Exception as e:
+            logger.error(f"Error getting paginated users: {str(e)}")
+            raise
+            
+    async def get_user_organizations(self, user_fp: str) -> List[Organization]:
+        """
+        Get all organizations a user belongs to
+        
+        Args:
+            user_fp: User fingerprint
+            
+        Returns:
+            List of organizations
+        """
+        try:
+            user = await self.get_user_by_fp(user_fp)
+            if not user:
+                logger.warning(f"Cannot get organizations for non-existent user: {user_fp}")
+                return []
+                
+            # Organizations are already loaded with lazy="selectin"
+            return user.organizations
+            
+        except Exception as e:
+            logger.error(f"Error getting user organizations: {str(e)}")
+            raise
+            
+    async def get_user_files_paginated(self, user_fp: str, page: int = 1, per_page: int = 20) -> Tuple[List[File], int]:
+        """
+        Get all files uploaded by a user with pagination
+        
+        Args:
+            user_fp: User fingerprint
+            page: Page number (starting from 1)
+            per_page: Number of items per page
+            
+        Returns:
+            Tuple of (list of files, total count)
+        """
+        try:
+            user = await self.get_user_by_fp(user_fp)
+            if not user:
+                logger.warning(f"Cannot get files for non-existent user: {user_fp}")
+                return [], 0
+                
+            # Count total files
+            count_stmt = select(func.count(File.id)).where(File.user_id == user.id)
+            result = await self.db.execute(count_stmt)
+            total_count = result.scalar() or 0
+            
+            # Get paginated files
+            offset = (page - 1) * per_page
+            stmt = (
+                select(File)
+                .where(File.user_id == user.id)
+                .order_by(desc(File.created_at))
+                .offset(offset)
+                .limit(per_page)
+            )
+            
+            result = await self.db.execute(stmt)
+            files = result.scalars().all()
+            
+            return files, total_count
+            
+        except Exception as e:
+            logger.error(f"Error getting user files: {str(e)}")
             raise
