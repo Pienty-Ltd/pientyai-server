@@ -55,8 +55,8 @@ async def get_request_body(request: Request) -> str:
     except UnicodeDecodeError:
         return "[binary data]"
 
-async def extract_user_id_from_token(request: Request) -> Optional[int]:
-    """Extract user ID from authorization token"""
+async def extract_user_fp_from_token(request: Request) -> Optional[str]:
+    """Extract user fingerprint from authorization token"""
     try:
         auth_header = request.headers.get("authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
@@ -65,10 +65,10 @@ async def extract_user_id_from_token(request: Request) -> Optional[int]:
         token = auth_header.replace("Bearer ", "")
         token_data = decode_access_token(token)
         
-        if token_data and "sub" in token_data:
-            return int(token_data["sub"])
+        if token_data and "fp" in token_data:
+            return token_data["fp"]
     except Exception as e:
-        logger.warning(f"Error extracting user ID from token: {str(e)}")
+        logger.warning(f"Error extracting user fingerprint from token: {str(e)}")
         
     return None
 
@@ -141,12 +141,12 @@ async def log_request_middleware(request: Request, call_next: Callable):
     if method not in ["GET", "HEAD"]:
         request_body = await get_request_body(request)
     
-    # Extract user ID from token
-    user_id = await extract_user_id_from_token(request)
+    # Extract user fingerprint from token
+    user_fp = await extract_user_fp_from_token(request)
     
     log_data = {
         "request_id": request_id,
-        "user_id": user_id,
+        "user_fp": user_fp,
         "ip_address": client_host,
         "method": method,
         "path": path,

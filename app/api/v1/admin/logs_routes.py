@@ -23,7 +23,7 @@ router = APIRouter(
 class RequestLogResponse(BaseModel):
     fp: str
     request_id: str
-    user_id: Optional[int] = None
+    user_fp: Optional[str] = None
     ip_address: Optional[str] = None
     method: str
     path: str
@@ -54,7 +54,7 @@ async def get_request_logs(
     per_page: int = Query(20, gt=0, le=100, description="Items per page"),
     path_filter: Optional[str] = Query(None, description="Filter logs by path"),
     status_filter: Optional[int] = Query(None, description="Filter logs by status code"),
-    user_id: Optional[int] = Query(None, description="Filter logs by user ID"),
+    user_fp_filter: Optional[str] = Query(None, description="Filter logs by user FP"),
     start_date: Optional[str] = Query(None, description="Filter logs from date (ISO format)"),
     end_date: Optional[str] = Query(None, description="Filter logs to date (ISO format)"),
     current_user: User = Depends(admin_required),
@@ -70,7 +70,7 @@ async def get_request_logs(
         per_page=per_page,
         path_filter=path_filter,
         status_filter=status_filter,
-        user_id_filter=user_id,
+        user_fp_filter=user_fp_filter,
         start_date=start_date,
         end_date=end_date
     )
@@ -80,7 +80,7 @@ async def get_request_logs(
         RequestLogResponse(
             fp=log.fp,
             request_id=log.request_id,
-            user_id=log.user_id,
+            user_fp=log.user_fp,
             ip_address=log.ip_address,
             method=log.method,
             path=log.path,
@@ -131,7 +131,7 @@ async def get_request_log_detail(
         data=RequestLogDetailResponse(
             fp=log.fp,
             request_id=log.request_id,
-            user_id=log.user_id,
+            user_fp=log.user_fp,
             ip_address=log.ip_address,
             method=log.method,
             path=log.path,
@@ -162,30 +162,24 @@ async def get_user_request_logs(
     Get a paginated list of request logs for a specific user identified by their FP.
     This endpoint is only accessible by administrators.
     """
-    # First find the user by fp
-    user_repo = UserRepository(db)
-    user = await user_repo.get_user_by_fp(user_fp)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"message": f"User with FP '{user_fp}' not found"}
-        )
-    
-    # Get user's logs
+    # Get user's logs directly using user_fp
     repo = RequestLogRepository(db)
     logs, total, pages = await repo.get_request_logs_by_user(
-        user_id=user.id,
+        user_fp=user_fp,
         page=page,
         per_page=per_page
     )
+    
+    if total == 0:
+        # No logs found for this user fingerprint
+        logger.info(f"No logs found for user with FP '{user_fp}'")
     
     # Convert to response models
     log_responses = [
         RequestLogResponse(
             fp=log.fp,
             request_id=log.request_id,
-            user_id=log.user_id,
+            user_fp=log.user_fp,
             ip_address=log.ip_address,
             method=log.method,
             path=log.path,
@@ -205,5 +199,5 @@ async def get_user_request_logs(
             current_page=page,
             per_page=per_page
         ),
-        message=f"Request logs for user '{user.email}' retrieved successfully"
+        message=f"Request logs for user with FP '{user_fp}' retrieved successfully"
     )

@@ -46,13 +46,13 @@ class RequestLogRepository:
     
     async def get_request_logs_by_user(
         self, 
-        user_id: int, 
+        user_fp: str, 
         page: int = 1, 
         per_page: int = 20
     ) -> tuple[List[RequestLog], int, int]:
         """Get request logs for a specific user with pagination"""
         # Query for logs
-        stmt = select(RequestLog).where(RequestLog.user_id == user_id) \
+        stmt = select(RequestLog).where(RequestLog.user_fp == user_fp) \
                                 .order_by(desc(RequestLog.created_at)) \
                                 .offset((page - 1) * per_page) \
                                 .limit(per_page)
@@ -61,7 +61,7 @@ class RequestLogRepository:
         
         # Count total logs
         count_stmt = select(func.count()).select_from(RequestLog) \
-                                        .where(RequestLog.user_id == user_id)
+                                        .where(RequestLog.user_fp == user_fp)
         count_result = await self.db.execute(count_stmt)
         total_count = count_result.scalar()
         
@@ -76,7 +76,7 @@ class RequestLogRepository:
         per_page: int = 20,
         path_filter: Optional[str] = None,
         status_filter: Optional[int] = None,
-        user_id_filter: Optional[int] = None,
+        user_fp_filter: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> tuple[List[RequestLog], int, int]:
@@ -94,8 +94,8 @@ class RequestLogRepository:
         if status_filter:
             query = query.where(RequestLog.response_status == status_filter)
             
-        if user_id_filter:
-            query = query.where(RequestLog.user_id == user_id_filter)
+        if user_fp_filter:
+            query = query.where(RequestLog.user_fp == user_fp_filter)
             
         if start_date:
             query = query.where(RequestLog.created_at >= start_date)
