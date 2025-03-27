@@ -319,7 +319,7 @@ def admin_required(user = Depends(get_current_user)):
 @router.get("/me", response_model=BaseResponse[dict],
            summary="Get current user",
            description="Get details of currently authenticated user")
-async def get_user_me(current_user=Depends(get_current_user)):
+async def get_user_me(request: Request, current_user=Depends(get_current_user)):
     """
     Get current authenticated user's details:
     - email: User's email
@@ -327,7 +327,8 @@ async def get_user_me(current_user=Depends(get_current_user)):
     - is_active: Account status
     - role: User role (admin/user)
     """
-    return BaseResponse(
+    return BaseResponse.from_request(
+        request=request,
         data={
             "email": current_user.email,
             "full_name": current_user.full_name,

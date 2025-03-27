@@ -7,6 +7,7 @@ from app.api.v1.dashboard_routes import router as dashboard_router
 from app.api.v1.document_routes import router as document_router
 from app.api.v1.invitation_routes import router as invitation_router
 from app.api.v1.payment_routes import router as payment_router
+from app.api.v1.logs_routes import router as logs_router
 
 # Create main router for v1 API
 router = APIRouter()
@@ -20,3 +21,4 @@ router.include_router(dashboard_router)
 router.include_router(document_router)
 router.include_router(invitation_router)
 router.include_router(payment_router)
+router.include_router(logs_router)

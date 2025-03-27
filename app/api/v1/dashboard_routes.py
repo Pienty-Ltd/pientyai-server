@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from pydantic import BaseModel
@@ -26,6 +26,7 @@ class DashboardResponse(BaseModel):
 
 @router.get("", response_model=BaseResponse[DashboardResponse])
 async def get_dashboard_data(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -70,9 +71,11 @@ async def get_dashboard_data(
         )
 
         logger.info(f"Dashboard data retrieved successfully for user: {current_user.email}")
-        return BaseResponse(
+        return BaseResponse.from_request(
+            request=request,
             success=True,
-            data=dashboard_data
+            data=dashboard_data,
+            message="Dashboard data retrieved successfully"
         )
 
     except HTTPException as e:
