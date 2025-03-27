@@ -25,81 +25,13 @@ router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-class CreateAdminRequest(BaseModel):
-    email: EmailStr
-    password: str
-    full_name: str
-
-class AdminUserResponse(BaseModel):
-    email: str
-    full_name: str
-    is_active: bool
-    created_at: datetime
-
 class PromoCodeStatsResponse(BaseModel):
     code: str
     times_used: int
     total_discount_amount: float
     active_users: int
 
-@router.post("/users/create-admin", response_model=BaseResponse[AdminUserResponse],
-            summary="Create admin user",
-            description="Create a new user with administrative privileges")
-async def create_admin_user(
-    request: CreateAdminRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(admin_required)
-):
-    """
-    Create a new admin user with:
-    - email: Admin's email address
-    - password: Secure password
-    - full_name: Admin's full name
 
-    Note: Only existing admins can create new admin users
-    """
-    try:
-        user_repo = UserRepository(db)
-        existing_user = await user_repo.get_user_by_email(request.email)
-
-        if existing_user:
-            logger.warning(f"Admin creation attempt with existing email: {request.email}")
-            return BaseResponse(
-                success=False,
-                error=ErrorResponse(message="Email already registered")
-            )
-
-        user_data = {
-            "email": request.email,
-            "password": request.password,
-            "full_name": request.full_name,
-            "role": UserRole.ADMIN,
-            "is_active": True
-        }
-        user = await user_repo.insert_user(user_data)
-        
-        if not user:
-            return BaseResponse(
-                success=False,
-                error=ErrorResponse(message="Failed to create admin user, email may already be in use")
-            )
-
-        logger.info(f"New admin user created: {user.email}")
-        return BaseResponse(
-            success=True,
-            data=AdminUserResponse(
-                email=user.email,
-                full_name=user.full_name,
-                is_active=user.is_active,
-                created_at=user.created_at
-            )
-        )
-    except Exception as e:
-        logger.error(f"Error creating admin user: {str(e)}")
-        return BaseResponse(
-            success=False,
-            error=ErrorResponse(message="Failed to create admin user")
-        )
 
 @router.get("/promo-codes/stats", response_model=BaseResponse[List[PromoCodeStatsResponse]],
            summary="Get promo code statistics",
@@ -178,42 +110,7 @@ async def deactivate_promo_code(
             error=ErrorResponse(message="Failed to deactivate promo code")
         )
 
-class UpdateStatsRequest(BaseModel):
-    batch_size: Optional[int] = 1000
 
-@router.post("/dashboard/update-stats", 
-            response_model=BaseResponse,
-            summary="Update dashboard statistics",
-            description="Manually trigger dashboard statistics update. This operation might take some time depending on the data size.")
-async def update_dashboard_stats(
-    request: UpdateStatsRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(admin_required)
-):
-    """
-    Manually trigger a dashboard statistics update:
-    - Refreshes materialized views
-    - Updates dashboard statistics
-    - Uses batch processing to handle large datasets
-
-    Note: This operation might take some time for large datasets
-    """
-    try:
-        stats_repo = DashboardStatsRepository(db)
-        batch_size = request.batch_size or 1000
-        await stats_repo.update_stats(batch_size=batch_size)
-
-        logger.info(f"Dashboard stats updated manually by admin {current_user.email}")
-        return BaseResponse(
-            success=True,
-            message="Dashboard statistics updated successfully"
-        )
-    except Exception as e:
-        logger.error(f"Error updating dashboard stats: {str(e)}")
-        return BaseResponse(
-            success=False,
-            error=ErrorResponse(message="Failed to update dashboard statistics")
-        )
         
 @router.get("/users", response_model=BaseResponse[PaginatedUserResponse],
            summary="List all users",
@@ -373,8 +270,7 @@ async def update_user(
     - Name
     - Password
     - Active status (enable/disable account)
-    
-    Note: Email and role cannot be updated
+    - Role (change user to admin or back to regular user)
     """
     try:
         user_repo = UserRepository(db)
@@ -387,6 +283,8 @@ async def update_user(
             updates["password"] = request.password
         if request.is_active is not None:
             updates["is_active"] = request.is_active
+        if request.role is not None:
+            updates["role"] = request.role
             
         if not updates:
             return BaseResponse(
