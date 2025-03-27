@@ -8,7 +8,7 @@ from app.schemas.base import BaseResponse, ErrorResponse
 from app.schemas.admin import (
     UserListResponse, UserDetailResponse, PaginatedUserResponse,
     OrganizationListResponse, UserStatsResponse, PaginatedUserFileResponse, 
-    UserFileResponse
+    UserFileResponse, PaginatedOrganizationResponse, UpdateUserRequest
 )
 from app.api.v1.auth import admin_required
 from app.database.models.db_models import UserRole
@@ -24,11 +24,7 @@ router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-class UpdateUserRequest(BaseModel):
-    full_name: Optional[str] = None
-    is_active: Optional[bool] = None
-    password: Optional[str] = None
-    role: Optional[UserRole] = None  # Kullanıcı rolünü değiştirme özelliği eklendi
+
 
 @router.get("", response_model=BaseResponse[PaginatedUserResponse],
            summary="List all users",
@@ -138,34 +134,50 @@ async def get_user_details(
             error=ErrorResponse(message="Failed to fetch user details")
         )
         
-@router.get("/{user_fp}/organizations", response_model=BaseResponse[List[OrganizationListResponse]],
+@router.get("/{user_fp}/organizations", response_model=BaseResponse[PaginatedOrganizationResponse],
            summary="Get user organizations",
-           description="Get list of organizations a user belongs to")
+           description="Get paginated list of organizations a user belongs to")
 async def get_user_organizations(
     user_fp: str,
+    page: int = Query(1, gt=0, description="Page number"),
+    per_page: int = Query(20, gt=0, le=100, description="Items per page, max 100"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(admin_required)
 ):
     """
-    Get list of organizations a user belongs to:
+    Get paginated list of organizations a user belongs to:
     - Organization name
     - Organization details
     - Created timestamp
+    - Page number (starting from 1)
+    - Items per page (max 100)
     """
     try:
         user_repo = UserRepository(db)
-        organizations = await user_repo.get_user_organizations(user_fp)
+        organizations, total_count = await user_repo.get_user_organizations_paginated(
+            user_fp=user_fp,
+            page=page,
+            per_page=per_page
+        )
+        
+        total_pages = math.ceil(total_count / per_page) if total_count > 0 else 0
         
         return BaseResponse(
             success=True,
-            data=[
-                OrganizationListResponse(
-                    fp=org.fp,
-                    name=org.name,
-                    description=org.description,
-                    created_at=org.created_at
-                ) for org in organizations
-            ]
+            data=PaginatedOrganizationResponse(
+                organizations=[
+                    OrganizationListResponse(
+                        fp=org.fp,
+                        name=org.name,
+                        description=org.description,
+                        created_at=org.created_at
+                    ) for org in organizations
+                ],
+                total_count=total_count,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page
+            )
         )
     except Exception as e:
         logger.error(f"Error getting user organizations: {str(e)}")
