@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text, CheckConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table, Boolean, Enum, Numeric, Text, CheckConstraint, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database.database_factory import Base
@@ -23,6 +23,12 @@ class PaymentStatus(enum.Enum):
     REFUNDED = "refunded"
 
 class FileStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class AnalysisStatus(str, enum.Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -177,6 +183,49 @@ class DashboardStats(Base):
 
     user = relationship("User", back_populates="dashboard_stats")
     organization = relationship("Organization", back_populates="dashboard_stats")
+
+class DocumentAnalysis(Base):
+    __tablename__ = "document_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fp = Column(String, unique=True, index=True, nullable=False,
+                default=lambda: f"analysis_{create_random_key(25)}")
+    
+    # İlişkiler
+    document_id = Column(Integer, ForeignKey("files.id"), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Analiz Sonuçları
+    analysis = Column(Text, nullable=True)  # Genel analiz sonucu
+    key_points = Column(JSON, nullable=True)  # Önemli noktalar
+    conflicts = Column(JSON, nullable=True)  # Çelişkiler
+    recommendations = Column(JSON, nullable=True)  # Öneriler
+    
+    # Gerçekleştirme Bilgileri
+    status = Column(Enum(AnalysisStatus), nullable=False, default=AnalysisStatus.PENDING)
+    total_chunks_analyzed = Column(Integer, default=0)
+    processing_time_seconds = Column(Numeric(10, 2), nullable=True)
+    chunk_analyses = Column(JSON, nullable=True)  # Her chunk için detaylı analiz sonuçları
+    
+    # Gerekli önceki versiyon ve sonraki versiyon karşılaştırmaları için
+    original_content = Column(Text, nullable=True)  # Orijinal içerik
+    suggested_changes = Column(JSON, nullable=True)  # Önerilen değişiklikler
+    
+    # Zaman bilgileri
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # İlişkiler
+    document = relationship("File", back_populates="analyses")
+    organization = relationship("Organization", back_populates="analyses")
+    user = relationship("User", back_populates="analyses")
+
+# İlişki güncellemeleri
+File.analyses = relationship("DocumentAnalysis", back_populates="document")
+Organization.analyses = relationship("DocumentAnalysis", back_populates="organization")
+User.analyses = relationship("DocumentAnalysis", back_populates="user")
 
 User.dashboard_stats = relationship("DashboardStats", back_populates="user")
 Organization.dashboard_stats = relationship("DashboardStats", back_populates="organization")

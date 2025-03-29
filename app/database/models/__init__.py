@@ -4,7 +4,8 @@ from .db_models import (
     User, UserRole, Organization,
     UserSubscription, PaymentHistory,
     PaymentStatus, SubscriptionStatus,
-    File, KnowledgeBase, FileStatus
+    File, KnowledgeBase, FileStatus,
+    DocumentAnalysis, AnalysisStatus
 )
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     'User', 'UserRole', 'Organization',
     'UserSubscription', 'PaymentHistory',
     'PaymentStatus', 'SubscriptionStatus',
-    'File', 'KnowledgeBase', 'FileStatus'
+    'File', 'KnowledgeBase', 'FileStatus',
+    'DocumentAnalysis', 'AnalysisStatus'
 ]
