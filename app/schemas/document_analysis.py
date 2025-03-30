@@ -10,8 +10,8 @@ class AnalysisStatusEnum(str, Enum):
     FAILED = "failed"
 
 class DocumentAnalysisRequest(BaseModel):
-    organization_id: int = Field(..., description="Organization ID the document belongs to")
-    document_id: int = Field(..., description="Document ID to analyze")
+    organization_fp: str = Field(..., description="Organization fingerprint (fp) the document belongs to")
+    document_fp: str = Field(..., description="Document fingerprint (fp) to analyze")
     max_relevant_chunks: int = Field(5, description="Maximum number of relevant chunks to use for context")
 
 class ChunkAnalysis(BaseModel):
@@ -21,8 +21,8 @@ class ChunkAnalysis(BaseModel):
     
 class DocumentAnalysisResponse(BaseModel):
     fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
-    document_id: int
-    organization_id: int
+    document_fp: str = Field(..., description="Document fingerprint (fp)")
+    organization_fp: str = Field(..., description="Organization fingerprint (fp)")
     analysis: str = Field(..., description="Overall analysis of the document")
     key_points: List[str] = Field([], description="Key points identified in the document")
     conflicts: List[str] = Field([], description="Potential conflicts with existing documents")
@@ -36,8 +36,8 @@ class DocumentAnalysisResponse(BaseModel):
 
 class AnalysisListItem(BaseModel):
     fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
-    document_id: int
-    organization_id: int
+    document_fp: str = Field(..., description="Document fingerprint (fp)")
+    organization_fp: str = Field(..., description="Organization fingerprint (fp)")
     status: str
     created_at: datetime
     completed_at: Optional[datetime] = None

@@ -7,7 +7,7 @@ from sqlalchemy import select, join
 from sqlalchemy.orm import joinedload
 
 from app.api.v1.auth import get_current_user
-from app.api.v1.middlewares.validation_middleware import validate_organization_id, validate_document_id
+from app.api.v1.middlewares.validation_middleware import validate_organization_id, validate_document_id, validate_document_fp, validate_organization_fp
 from app.core.services.document_analysis_service import DocumentAnalysisService
 from app.core.services.document_service import DocumentService
 from app.schemas.base import BaseResponse
@@ -42,48 +42,61 @@ async def analyze_document(
     can be retrieved later using the analysis listing and detail endpoints.
     """
     try:
-        logger.info(f"Document analysis requested for doc {analysis_request.document_id} in org {analysis_request.organization_id}")
+        logger.info(f"Document analysis requested for doc {analysis_request.document_fp} in org {analysis_request.organization_fp}")
         
-        # Validate organization and document IDs
-        await validate_organization_id(analysis_request.organization_id)
-        await validate_document_id(analysis_request.document_id)
+        # Validate organization FP and document fingerprint
+        await validate_organization_fp(analysis_request.organization_fp)
+        await validate_document_fp(analysis_request.document_fp)
         
-        # Check if user has access to organization
-        if not any(org.id == analysis_request.organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to analyze document {analysis_request.document_id} in org {analysis_request.organization_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
+        # Initialize services
+        from app.database.repositories.organization_repository import OrganizationRepository
+        async with async_session_maker() as session:
+            org_repo = OrganizationRepository(session)
+            
+            # Get organization from FP
+            organization = await org_repo.get_organization_by_fp(analysis_request.organization_fp)
+            if not organization:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Organization not found"
+                )
+                
+            # Check if user has access to organization
+            if not any(org.id == organization.id for org in current_user.organizations):
+                logger.warning(f"Access denied: User {current_user.id} attempted to analyze document {analysis_request.document_fp} in org {organization.id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
+            
+            # Initialize service
+            document_analysis_service = DocumentAnalysisService()
+            
+            # Create a record to track the analysis using document fingerprint
+            analysis_record = await document_analysis_service.create_analysis_record_by_fp(
+                document_fp=analysis_request.document_fp,
+                organization_id=organization.id,  # Use actual ID from organization object
+                user_id=current_user.id
             )
-        
-        # Initialize service
-        document_analysis_service = DocumentAnalysisService()
-        
-        # Create a record to track the analysis
-        analysis_record = await document_analysis_service.create_analysis_record(
-            document_id=analysis_request.document_id,
-            organization_id=analysis_request.organization_id,
-            user_id=current_user.id
-        )
-        
-        # Get document details for the response
-        document_service = DocumentService()
-        document = await document_service.get_document_by_id(
-            organization_id=analysis_request.organization_id, 
-            document_id=analysis_request.document_id
-        )
+            
+            # Get document details for the response
+            document_service = DocumentService()
+            document = await document_service.get_document_by_fp(
+                organization_id=organization.id, 
+                document_fp=analysis_request.document_fp
+            )
         
         # Add the analysis task to background_tasks
         async def run_analysis_task():
             try:
-                logger.info(f"Background analysis task started for document {analysis_request.document_id}")
+                logger.info(f"Background analysis task started for document {analysis_request.document_fp}")
                 await document_analysis_service.analyze_document_with_knowledge_base(
-                    organization_id=analysis_request.organization_id,
-                    document_id=analysis_request.document_id,
+                    organization_id=organization.id,
+                    document_id=analysis_record.document_id,  # Using ID from created record
                     user_id=current_user.id,
                     max_relevant_chunks=analysis_request.max_relevant_chunks
                 )
-                logger.info(f"Background analysis task completed for document {analysis_request.document_id}")
+                logger.info(f"Background analysis task completed for document {analysis_request.document_fp}")
             except Exception as e:
                 logger.error(f"Error in background analysis task: {str(e)}", exc_info=True)
                 # Update the analysis status to failed
@@ -95,13 +108,19 @@ async def analyze_document(
         # Add the task to run in the background
         background_tasks.add_task(run_analysis_task)
         
+        # Get organization and document fingerprints
+        document = await document_service.get_document_by_id(organization.id, analysis_record.document_id)
+        if not document:
+            logger.error(f"Document not found for ID: {analysis_record.document_id}")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        
         # Return the analysis record information immediately
         return BaseResponse.from_request(
             request=request,
             data=DocumentAnalysisResponse(
                 fp=analysis_record.fp,
-                document_id=analysis_record.document_id,
-                organization_id=analysis_record.organization_id,
+                document_fp=document.fp,
+                organization_fp=organization.fp,
                 analysis="Analysis in progress...",
                 key_points=[],
                 conflicts=[],
@@ -136,7 +155,7 @@ async def analyze_document(
 @router.get("", response_model=BaseResponse[PaginatedAnalysisResponse])
 async def list_analyses(
     request: Request,
-    organization_id: Optional[int] = Query(None, description="Organization ID to filter by (optional)"),
+    organization_fp: Optional[str] = Query(None, description="Organization fingerprint (fp) to filter by (optional)"),
     page: int = Query(1, description="Page number, starting at 1"),
     per_page: int = Query(10, description="Number of items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -146,32 +165,45 @@ async def list_analyses(
     List document analyses with pagination.
     
     This endpoint retrieves a paginated list of document analyses.
-    - If organization_id is provided, only analyses from that organization are returned.
-    - If organization_id is not provided, analyses from all organizations the user has access to are returned.
+    - If organization_fp is provided, only analyses from that organization are returned.
+    - If organization_fp is not provided, analyses from all organizations the user has access to are returned.
     Results can be filtered by status.
     """
     try:
         # Initialize service
         document_analysis_service = DocumentAnalysisService()
         
-        if organization_id:
-            # Validate organization ID and check access
-            await validate_organization_id(organization_id)
+        if organization_fp:
+            # Validate organization FP
+            await validate_organization_fp(organization_fp)
             
-            if not any(org.id == organization_id for org in current_user.organizations):
-                logger.warning(f"Access denied: User {current_user.id} attempted to list analyses for org {organization_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to organization"
+            # Get organization by FP
+            from app.database.repositories.organization_repository import OrganizationRepository
+            async with async_session_maker() as session:
+                org_repo = OrganizationRepository(session)
+                organization = await org_repo.get_organization_by_fp(organization_fp)
+                
+                if not organization:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Organization not found"
+                    )
+                
+                # Check if user has access to organization
+                if not any(org.id == organization.id for org in current_user.organizations):
+                    logger.warning(f"Access denied: User {current_user.id} attempted to list analyses for org {organization_fp}")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to organization"
+                    )
+                
+                # Get analyses with pagination for specific organization
+                analyses, total_count, total_pages = await document_analysis_service.get_analyses_for_organization(
+                    organization_id=organization.id,
+                    page=page,
+                    per_page=per_page,
+                    status_filter=status
                 )
-            
-            # Get analyses with pagination for specific organization
-            analyses, total_count, total_pages = await document_analysis_service.get_analyses_for_organization(
-                organization_id=organization_id,
-                page=page,
-                per_page=per_page,
-                status_filter=status
-            )
         else:
             # Get analyses from all organizations the user has access to
             user_org_ids = [org.id for org in current_user.organizations]
@@ -189,8 +221,12 @@ async def list_analyses(
         # Fetch document details for all analyses at once
         document_service = DocumentService()
         documents = {}
+        document_fps = {}
+        organizations = {}
+        
         if document_ids:
             async with async_session_maker() as session:
+                # Get document details
                 query = select(File).where(File.id.in_(document_ids))
                 result = await session.execute(query)
                 file_records = result.scalars().all()
@@ -198,17 +234,32 @@ async def list_analyses(
                 for file in file_records:
                     documents[file.id] = {
                         "filename": file.filename,
-                        "file_type": file.file_type
+                        "file_type": file.file_type,
+                        "fp": file.fp
                     }
+                    document_fps[file.id] = file.fp
+                
+                # Get organization details for each unique organization ID
+                org_ids = set(analysis.organization_id for analysis in analyses)
+                from app.database.models.db_models import Organization
+                query = select(Organization).where(Organization.id.in_(org_ids))
+                result = await session.execute(query)
+                org_records = result.scalars().all()
+                
+                for org in org_records:
+                    organizations[org.id] = org.fp
         
         # Create response data
         analyses_data = []
         for analysis in analyses:
             doc_info = documents.get(analysis.document_id, {})
+            document_fp = document_fps.get(analysis.document_id, "")
+            organization_fp = organizations.get(analysis.organization_id, "")
+            
             analyses_data.append(AnalysisListItem(
                 fp=analysis.fp,
-                document_id=analysis.document_id,
-                organization_id=analysis.organization_id,
+                document_fp=document_fp,
+                organization_fp=organization_fp,
                 status=analysis.status.value,
                 created_at=analysis.created_at,
                 completed_at=analysis.completed_at,
@@ -280,17 +331,25 @@ async def get_analysis_detail(
                 detail="Access denied to organization"
             )
         
-        # Get document details
+        # Get document and organization details
         document_service = DocumentService()
         document = await document_service.get_document_by_id(analysis.organization_id, analysis.document_id)
+        
+        # Get organization FP
+        async with async_session_maker() as session:
+            from app.database.models.db_models import Organization
+            from app.database.repositories.organization_repository import OrganizationRepository
+            org_repo = OrganizationRepository(session)
+            organization = await org_repo.get_organization_by_id(analysis.organization_id)
+            organization_fp = organization.fp if organization else ""
         
         # Prepare the response
         return BaseResponse.from_request(
             request=request,
             data=AnalysisDetailResponse(
                 fp=analysis.fp,
-                document_id=analysis.document_id,
-                organization_id=analysis.organization_id,
+                document_fp=document.fp if document else "",
+                organization_fp=organization_fp,
                 analysis=analysis.analysis,
                 key_points=analysis.key_points or [],
                 conflicts=analysis.conflicts or [],

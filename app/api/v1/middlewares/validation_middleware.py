@@ -63,3 +63,21 @@ async def validate_organization_id(organization_id: int):
             detail="Invalid organization ID"
         )
     return organization_id
+
+async def validate_document_fp(document_fp: str):
+    """Validate document fingerprint (fp) parameter"""
+    if not document_fp or len(document_fp) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid document fingerprint"
+        )
+    return document_fp
+
+async def validate_organization_fp(organization_fp: str):
+    """Validate organization fingerprint (fp) parameter"""
+    if not organization_fp or len(organization_fp) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid organization fingerprint"
+        )
+    return organization_fp

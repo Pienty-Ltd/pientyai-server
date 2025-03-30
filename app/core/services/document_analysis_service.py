@@ -149,11 +149,31 @@ class DocumentAnalysisService:
             
             # Get the updated record to return
             updated_record = await self.get_analysis_by_id(analysis_record.id)
+            
+            # Get document and organization FPs
+            document = None
+            organization = None
+            try:
+                async with async_session_maker() as session:
+                    # Get document FP
+                    from app.database.models.db_models import File
+                    query = select(File).where(File.id == updated_record.document_id)
+                    result = await session.execute(query)
+                    document = result.scalar_one_or_none()
+                    
+                    # Get organization FP
+                    from app.database.models.db_models import Organization
+                    query = select(Organization).where(Organization.id == updated_record.organization_id)
+                    result = await session.execute(query)
+                    organization = result.scalar_one_or_none()
+            except Exception as e:
+                logger.error(f"Error getting document or organization details: {e}", exc_info=True)
+            
             return {
                 "id": updated_record.id,
                 "fp": updated_record.fp,
-                "document_id": updated_record.document_id,
-                "organization_id": updated_record.organization_id,
+                "document_fp": document.fp if document else "",
+                "organization_fp": organization.fp if organization else "",
                 "analysis": updated_record.analysis,
                 "key_points": updated_record.key_points,
                 "conflicts": updated_record.conflicts,
@@ -253,7 +273,7 @@ class DocumentAnalysisService:
         organization_id: int,
         user_id: int
     ) -> DocumentAnalysis:
-        """Create a new document analysis record in pending state"""
+        """Create a new document analysis record in pending state using document ID"""
         try:
             async with async_session_maker() as session:
                 # Check if there's already an active analysis for this document
@@ -286,6 +306,56 @@ class DocumentAnalysisService:
                 
         except Exception as e:
             logger.error(f"Error creating analysis record: {str(e)}")
+            raise
+            
+    async def create_analysis_record_by_fp(
+        self,
+        document_fp: str,
+        organization_id: int,
+        user_id: int
+    ) -> DocumentAnalysis:
+        """Create a new document analysis record in pending state using document fingerprint (fp)"""
+        try:
+            # First get the document ID from the fingerprint
+            document_service = DocumentService()
+            document = await document_service.get_document_by_fp(organization_id, document_fp)
+            
+            if not document:
+                raise ValueError(f"Document with fingerprint {document_fp} not found")
+                
+            document_id = document.id
+            
+            # Check if there's already an active analysis for this document
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    (DocumentAnalysis.document_id == document_id) &
+                    (DocumentAnalysis.status.in_([AnalysisStatus.PENDING, AnalysisStatus.PROCESSING]))
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+                
+                if existing:
+                    logger.info(f"Analysis already in progress for document {document_fp} (ID: {document_id}), returning existing record")
+                    return existing
+                
+                # Create new analysis record
+                analysis = DocumentAnalysis(
+                    document_id=document_id,
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    status=AnalysisStatus.PENDING,
+                    total_chunks_analyzed=0
+                )
+                
+                session.add(analysis)
+                await session.commit()
+                await session.refresh(analysis)
+                
+                logger.info(f"Created analysis record {analysis.id} for document {document_fp} (ID: {document_id})")
+                return analysis
+                
+        except Exception as e:
+            logger.error(f"Error creating analysis record by FP: {str(e)}")
             raise
             
     async def get_analysis_by_id(self, analysis_id: int) -> Optional[DocumentAnalysis]:
@@ -430,21 +500,8 @@ class DocumentAnalysisService:
             logger.error(f"Error getting analyses for organization: {str(e)}")
             raise
     
-    async def get_analysis_by_fp(self, analysis_fp: str) -> Optional[DocumentAnalysis]:
-        """Get an analysis record by its fingerprint"""
-        try:
-            async with async_session_maker() as session:
-                stmt = select(DocumentAnalysis).where(
-                    DocumentAnalysis.fp == analysis_fp
-                )
-                result = await session.execute(stmt)
-                analysis = result.scalar_one_or_none()
-                
-                return analysis
-                
-        except Exception as e:
-            logger.error(f"Error getting analysis by fp: {str(e)}")
-            raise
+# Method removed to fix duplicate function definition
+# The get_analysis_by_fp method is already defined at line 375
     
     async def update_analysis_status(
         self,

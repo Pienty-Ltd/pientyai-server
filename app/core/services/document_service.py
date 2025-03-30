@@ -488,7 +488,29 @@ class DocumentService:
                 return document
 
         except Exception as e:
-            logger.error(f"Error fetching document: {str(e)}")
+            logger.error(f"Error fetching document by ID: {str(e)}")
+            raise
+    
+    async def get_document_by_fp(
+        self,
+        organization_id: int,
+        document_fp: str
+    ) -> Optional[File]:
+        """Get a single document by fingerprint (fp) within an organization"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(File).where(
+                    File.fp == document_fp,
+                    File.organization_id == organization_id
+                ).options(
+                    joinedload(File.knowledge_base)
+                )
+                result = await session.execute(stmt)
+                document = result.unique().scalar_one_or_none()
+                return document
+
+        except Exception as e:
+            logger.error(f"Error fetching document by FP: {str(e)}")
             raise
 
     async def delete_document(
