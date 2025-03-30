@@ -199,6 +199,7 @@ class DocumentAnalysisService:
     ) -> List[KnowledgeBase]:
         """
         Find the most relevant knowledge base chunks for a query text
+        Only searches through actual knowledge base chunks (is_knowledge_base=True)
         
         Args:
             organization_id: ID of the organization
@@ -217,9 +218,11 @@ class DocumentAnalysisService:
                 return []
                 
             async with async_session_maker() as session:
-                # Base query: chunks from this organization, ordered by vector similarity
+                # Base query: chunks from this organization that are part of the knowledge base,
+                # ordered by vector similarity
                 query = select(KnowledgeBase).where(
-                    KnowledgeBase.organization_id == organization_id
+                    KnowledgeBase.organization_id == organization_id,
+                    KnowledgeBase.is_knowledge_base == True  # Only include knowledge base chunks
                 )
                 
                 # If a current document ID is provided, exclude it from the results
@@ -297,6 +300,20 @@ class DocumentAnalysisService:
                 
         except Exception as e:
             logger.error(f"Error getting analysis by ID: {str(e)}")
+            raise
+            
+    async def get_analysis_by_fp(self, analysis_fp: str) -> Optional[DocumentAnalysis]:
+        """Get analysis record by fingerprint (fp)"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp
+                )
+                result = await session.execute(stmt)
+                return result.scalar_one_or_none()
+                
+        except Exception as e:
+            logger.error(f"Error getting analysis by fingerprint: {str(e)}")
             raise
     
     async def get_analysis_by_document_id(self, document_id: int) -> List[DocumentAnalysis]:

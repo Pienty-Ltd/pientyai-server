@@ -232,10 +232,10 @@ async def list_analyses(
             detail="An error occurred while listing analyses"
         )
 
-@router.get("/{analysis_id}", response_model=BaseResponse[AnalysisDetailResponse])
+@router.get("/{analysis_fp}", response_model=BaseResponse[AnalysisDetailResponse])
 async def get_analysis_detail(
     request: Request,
-    analysis_id: int = Path(..., description="Analysis ID to retrieve"),
+    analysis_fp: str = Path(..., description="Analysis fingerprint (fp) to retrieve"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -251,18 +251,18 @@ async def get_analysis_detail(
         # Initialize service
         document_analysis_service = DocumentAnalysisService()
         
-        # Get the analysis
-        analysis = await document_analysis_service.get_analysis_by_id(analysis_id)
+        # Get the analysis by fingerprint
+        analysis = await document_analysis_service.get_analysis_by_fp(analysis_fp)
         
         if not analysis:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Analysis with ID {analysis_id} not found"
+                detail=f"Analysis with fingerprint {analysis_fp} not found"
             )
             
         # Check user access to the organization
         if not any(org.id == analysis.organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access analysis {analysis_id} in org {analysis.organization_id}")
+            logger.warning(f"Access denied: User {current_user.id} attempted to access analysis {analysis_fp} in org {analysis.organization_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -296,7 +296,7 @@ async def get_analysis_detail(
                 document_type=document.file_type if document else None
             ),
             success=True,
-            message=f"Retrieved details for analysis {analysis_id}"
+            message=f"Retrieved details for analysis {analysis_fp}"
         )
         
     except HTTPException as e:

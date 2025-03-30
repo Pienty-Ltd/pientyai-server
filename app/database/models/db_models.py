@@ -102,6 +102,7 @@ class File(Base):
     status = Column(Enum(FileStatus), nullable=False, default=FileStatus.PENDING)
     file_size = Column(Integer)  # Size in bytes
     chunk_count = Column(Integer, default=0)  # Add chunk_count column with default 0
+    is_knowledge_base = Column(Boolean, default=True, nullable=False)  # Whether this file is for knowledge base or analysis
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -122,6 +123,7 @@ class KnowledgeBase(Base):
     content = Column(Text, nullable=False)  # Chunk içeriği
     embedding = Column(Vector(1536), nullable=False)  # OpenAI ada-002 embedding vektörü
     meta_info = Column(String)  # JSON olarak ek bilgiler (metadata yerine meta_info kullanıyoruz)
+    is_knowledge_base = Column(Boolean, default=True, nullable=False)  # True for knowledge base chunks, False for analysis document chunks
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

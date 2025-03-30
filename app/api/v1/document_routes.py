@@ -107,11 +107,12 @@ async def process_document_background(
     file_type: str,
     user_id: int,
     organization_id: int,
-    db_file_id: int
+    db_file_id: int,
+    is_knowledge_base: bool = True
 ):
     """Background task for processing document after upload"""
     try:
-        logger.info(f"Starting background processing for document {filename} (ID: {db_file_id})")
+        logger.info(f"Starting background processing for document {filename} (ID: {db_file_id}, knowledge_base: {is_knowledge_base})")
         start_time = datetime.now()
 
         document_service = DocumentService()
@@ -121,7 +122,8 @@ async def process_document_background(
             file_type=file_type,
             user_id=user_id,
             organization_id=organization_id,
-            db_file_id=db_file_id
+            db_file_id=db_file_id,
+            is_knowledge_base=is_knowledge_base
         )
 
         processing_duration = (datetime.now() - start_time).total_seconds()
@@ -365,11 +367,17 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     organization_id: int = Query(..., description="Organization ID to upload the document to"),
+    is_knowledge_base: bool = Query(True, description="Whether the document is for knowledge base (True) or for analysis (False)"),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and process a document for knowledge base"""
+    """
+    Upload and process a document
+    
+    - Set is_knowledge_base=True for documents that should be part of the knowledge base for reference
+    - Set is_knowledge_base=False for documents that will be analyzed against the knowledge base
+    """
     try:
-        logger.info(f"Processing upload request for file {file.filename} to organization {organization_id}")
+        logger.info(f"Processing upload request for file {file.filename} to organization {organization_id} (knowledge_base: {is_knowledge_base})")
         start_time = datetime.now()
 
         # Enhanced file validation
@@ -402,7 +410,8 @@ async def upload_document(
             filename=file.filename,
             file_type=file_type,
             user_id=current_user.id,
-            organization_id=organization_id
+            organization_id=organization_id,
+            is_knowledge_base=is_knowledge_base
         )
 
         # Schedule background processing
@@ -413,7 +422,8 @@ async def upload_document(
             file_type=file_type,
             user_id=current_user.id,
             organization_id=organization_id,
-            db_file_id=db_file.id
+            db_file_id=db_file.id,
+            is_knowledge_base=is_knowledge_base
         )
 
         duration = (datetime.now() - start_time).total_seconds()
@@ -430,7 +440,8 @@ async def upload_document(
                 status=db_file.status,
                 created_at=db_file.created_at,
                 chunks_count=0,  # Will be updated during processing
-                organization_id=organization_id
+                organization_id=organization_id,
+                is_knowledge_base=is_knowledge_base
             )
         )
 

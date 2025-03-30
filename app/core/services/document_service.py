@@ -46,7 +46,8 @@ class DocumentService:
         filename: str,
         file_type: str,
         user_id: int,
-        organization_id: int
+        organization_id: int,
+        is_knowledge_base: bool = True
     ) -> File:
         """Create initial file record with PROCESSING status"""
         try:
@@ -58,7 +59,8 @@ class DocumentService:
                 user_id=user_id,
                 organization_id=organization_id,
                 s3_key=f"documents/{organization_id}/{filename}",
-                chunk_count=0  # Explicitly set initial chunk count
+                chunk_count=0,  # Explicitly set initial chunk count
+                is_knowledge_base=is_knowledge_base  # Set whether this file is for knowledge base or analysis
             )
 
             async with async_session_maker() as session:
@@ -102,7 +104,8 @@ class DocumentService:
         file_type: str,
         user_id: int,
         organization_id: int,
-        db_file_id: int
+        db_file_id: int,
+        is_knowledge_base: bool = True
     ) -> None:
         """
         Process uploaded document asynchronously:
@@ -110,6 +113,9 @@ class DocumentService:
         - Extract text
         - Generate embeddings
         - Save to knowledge base
+        
+        Parameters:
+            is_knowledge_base: Whether document is for knowledge base (True) or for analysis (False)
         """
         try:
             logger.info(f"Starting document processing for file: {filename} (ID: {db_file_id})")
@@ -171,7 +177,8 @@ class DocumentService:
                                         "total_chunks": total_chunks
                                     }),
                                     file_id=db_file_id,
-                                    organization_id=organization_id
+                                    organization_id=organization_id,
+                                    is_knowledge_base=is_knowledge_base
                                 )
                                 batch_entries.append(kb_entry)
 
@@ -340,6 +347,7 @@ class DocumentService:
     ) -> List[KnowledgeBase]:
         """
         Search through documents using semantic search with embeddings
+        Only searches through knowledge base documents (is_knowledge_base=True)
         """
         try:
             logger.info(f"Starting semantic search for org {organization_id}. Query: '{query}'")
@@ -356,9 +364,11 @@ class DocumentService:
 
             async with async_session_maker() as session:
                 # Using pgvector's L2 distance to find similar chunks
+                # Only search in knowledge base chunks (is_knowledge_base=True)
                 search_start = datetime.now()
                 stmt = select(KnowledgeBase).where(
-                    KnowledgeBase.organization_id == organization_id
+                    KnowledgeBase.organization_id == organization_id,
+                    KnowledgeBase.is_knowledge_base == True
                 ).order_by(
                     func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
                 ).limit(limit)

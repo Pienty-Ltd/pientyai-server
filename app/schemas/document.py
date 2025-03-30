@@ -1,7 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from app.database.models.db_models import FileStatus
+
+class DocumentUploadRequest(BaseModel):
+    organization_id: int = Field(..., description="Organization ID to upload the document to")
+    is_knowledge_base: bool = Field(True, description="Whether the document is for knowledge base (True) or for analysis (False)")
 
 class DocumentResponse(BaseModel):
     id: int
@@ -12,6 +16,7 @@ class DocumentResponse(BaseModel):
     created_at: datetime
     chunks_count: int
     organization_id: int
+    is_knowledge_base: Optional[bool] = True
 
 class KnowledgeBaseResponse(BaseModel):
     id: int
@@ -20,6 +25,7 @@ class KnowledgeBaseResponse(BaseModel):
     content: str
     meta_info: dict
     created_at: datetime
+    is_knowledge_base: bool = True
 
 class PaginatedDocumentResponse(BaseModel):
     documents: List[DocumentResponse]
