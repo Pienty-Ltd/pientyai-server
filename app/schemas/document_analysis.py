@@ -20,8 +20,7 @@ class ChunkAnalysis(BaseModel):
     processing_time_seconds: Optional[float] = None
     
 class DocumentAnalysisResponse(BaseModel):
-    id: Optional[int] = None
-    fp: Optional[str] = None
+    fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
     document_id: int
     organization_id: int
     analysis: str = Field(..., description="Overall analysis of the document")
@@ -36,8 +35,7 @@ class DocumentAnalysisResponse(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="When the analysis was completed")
 
 class AnalysisListItem(BaseModel):
-    id: int
-    fp: str
+    fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
     document_id: int
     organization_id: int
     status: str

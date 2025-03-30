@@ -87,8 +87,8 @@ async def analyze_document(
             except Exception as e:
                 logger.error(f"Error in background analysis task: {str(e)}", exc_info=True)
                 # Update the analysis status to failed
-                await document_analysis_service.update_analysis_status(
-                    analysis_record.id, 
+                await document_analysis_service.update_analysis_status_by_fp(
+                    analysis_record.fp, 
                     AnalysisStatus.FAILED
                 )
         
@@ -99,7 +99,6 @@ async def analyze_document(
         return BaseResponse.from_request(
             request=request,
             data=DocumentAnalysisResponse(
-                id=analysis_record.id,
                 fp=analysis_record.fp,
                 document_id=analysis_record.document_id,
                 organization_id=analysis_record.organization_id,
@@ -115,7 +114,7 @@ async def analyze_document(
                 completed_at=None
             ),
             success=True,
-            message=f"Document analysis queued successfully. Analysis ID: {analysis_record.id}. Check status using the detail endpoint."
+            message=f"Document analysis queued successfully. Use fingerprint: {analysis_record.fp} to check status using the detail endpoint."
         )
     
     except ValueError as e:
@@ -137,7 +136,7 @@ async def analyze_document(
 @router.get("", response_model=BaseResponse[PaginatedAnalysisResponse])
 async def list_analyses(
     request: Request,
-    organization_id: int = Query(..., description="Organization ID to filter by"),
+    organization_id: Optional[int] = Query(None, description="Organization ID to filter by (optional)"),
     page: int = Query(1, description="Page number, starting at 1"),
     per_page: int = Query(10, description="Number of items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -146,29 +145,43 @@ async def list_analyses(
     """
     List document analyses with pagination.
     
-    This endpoint retrieves a paginated list of document analyses for a specific organization.
+    This endpoint retrieves a paginated list of document analyses.
+    - If organization_id is provided, only analyses from that organization are returned.
+    - If organization_id is not provided, analyses from all organizations the user has access to are returned.
     Results can be filtered by status.
     """
     try:
-        # Validate organization ID and check access
-        await validate_organization_id(organization_id)
-        
-        if not any(org.id == organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to list analyses for org {organization_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
-            
         # Initialize service
         document_analysis_service = DocumentAnalysisService()
         
-        # Get analyses with pagination
-        analyses, total_count, total_pages = await document_analysis_service.get_analyses_for_organization(
-            organization_id=organization_id,
-            page=page,
-            per_page=per_page
-        )
+        if organization_id:
+            # Validate organization ID and check access
+            await validate_organization_id(organization_id)
+            
+            if not any(org.id == organization_id for org in current_user.organizations):
+                logger.warning(f"Access denied: User {current_user.id} attempted to list analyses for org {organization_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to organization"
+                )
+            
+            # Get analyses with pagination for specific organization
+            analyses, total_count, total_pages = await document_analysis_service.get_analyses_for_organization(
+                organization_id=organization_id,
+                page=page,
+                per_page=per_page,
+                status_filter=status
+            )
+        else:
+            # Get analyses from all organizations the user has access to
+            user_org_ids = [org.id for org in current_user.organizations]
+            
+            analyses, total_count, total_pages = await document_analysis_service.get_analyses_for_user(
+                user_organization_ids=user_org_ids,
+                page=page,
+                per_page=per_page,
+                status_filter=status
+            )
         
         # Collect document IDs to fetch document details
         document_ids = [analysis.document_id for analysis in analyses]
@@ -193,7 +206,6 @@ async def list_analyses(
         for analysis in analyses:
             doc_info = documents.get(analysis.document_id, {})
             analyses_data.append(AnalysisListItem(
-                id=analysis.id,
                 fp=analysis.fp,
                 document_id=analysis.document_id,
                 organization_id=analysis.organization_id,
@@ -276,7 +288,6 @@ async def get_analysis_detail(
         return BaseResponse.from_request(
             request=request,
             data=AnalysisDetailResponse(
-                id=analysis.id,
                 fp=analysis.fp,
                 document_id=analysis.document_id,
                 organization_id=analysis.organization_id,

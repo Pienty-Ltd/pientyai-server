@@ -335,14 +335,26 @@ class DocumentAnalysisService:
         self,
         organization_id: int,
         page: int = 1,
-        per_page: int = 10
+        per_page: int = 10,
+        status_filter: Optional[str] = None
     ) -> Tuple[List[DocumentAnalysis], int, int]:
-        """Get analyses for an organization with pagination"""
+        """Get analyses for a specific organization with pagination"""
         try:
             async with async_session_maker() as session:
+                # Start with base condition on organization ID
+                conditions = [DocumentAnalysis.organization_id == organization_id]
+                
+                # Add status filter if provided
+                if status_filter:
+                    try:
+                        status_enum = AnalysisStatus[status_filter.upper()]
+                        conditions.append(DocumentAnalysis.status == status_enum)
+                    except KeyError:
+                        logger.warning(f"Invalid status filter: {status_filter}")
+                
                 # Get total count
                 count_stmt = select(func.count()).select_from(DocumentAnalysis).where(
-                    DocumentAnalysis.organization_id == organization_id
+                    *conditions
                 )
                 result = await session.execute(count_stmt)
                 total_count = result.scalar_one()
@@ -353,7 +365,58 @@ class DocumentAnalysisService:
                 
                 # Get paginated data
                 stmt = select(DocumentAnalysis).where(
-                    DocumentAnalysis.organization_id == organization_id
+                    *conditions
+                ).order_by(
+                    desc(DocumentAnalysis.created_at)
+                ).offset(offset).limit(per_page)
+                
+                result = await session.execute(stmt)
+                analyses = result.scalars().all()
+                
+                return analyses, total_count, total_pages
+                
+        except Exception as e:
+            logger.error(f"Error getting analyses for organization: {str(e)}")
+            raise
+                
+    async def get_analyses_for_user(
+        self,
+        user_organization_ids: List[int],
+        page: int = 1, 
+        per_page: int = 10,
+        status_filter: Optional[str] = None
+    ) -> Tuple[List[DocumentAnalysis], int, int]:
+        """Get analyses across all organizations a user has access to"""
+        try:
+            if not user_organization_ids:
+                return [], 0, 1
+                
+            async with async_session_maker() as session:
+                # Base condition: analyses from any of the user's organizations
+                conditions = [DocumentAnalysis.organization_id.in_(user_organization_ids)]
+                
+                # Add status filter if provided
+                if status_filter:
+                    try:
+                        status_enum = AnalysisStatus[status_filter.upper()]
+                        conditions.append(DocumentAnalysis.status == status_enum)
+                    except KeyError:
+                        logger.warning(f"Invalid status filter: {status_filter}")
+                
+                # Get total count
+                count_stmt = select(func.count()).select_from(DocumentAnalysis).where(
+                    *conditions
+                )
+                result = await session.execute(count_stmt)
+                total_count = result.scalar_one()
+                
+                # Calculate pagination
+                total_pages = math.ceil(total_count / per_page) if total_count > 0 else 1
+                offset = (page - 1) * per_page
+                
+                # Get paginated data
+                stmt = select(DocumentAnalysis).where(
+                    *conditions
                 ).order_by(
                     desc(DocumentAnalysis.created_at)
                 ).offset(offset).limit(per_page)
@@ -367,12 +430,28 @@ class DocumentAnalysisService:
             logger.error(f"Error getting analyses for organization: {str(e)}")
             raise
     
+    async def get_analysis_by_fp(self, analysis_fp: str) -> Optional[DocumentAnalysis]:
+        """Get an analysis record by its fingerprint"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp
+                )
+                result = await session.execute(stmt)
+                analysis = result.scalar_one_or_none()
+                
+                return analysis
+                
+        except Exception as e:
+            logger.error(f"Error getting analysis by fp: {str(e)}")
+            raise
+    
     async def update_analysis_status(
         self,
         analysis_id: int,
         status: AnalysisStatus
     ) -> None:
-        """Update the status of an analysis record"""
+        """Update the status of an analysis record by ID"""
         try:
             async with async_session_maker() as session:
                 stmt = select(DocumentAnalysis).where(
@@ -398,12 +477,43 @@ class DocumentAnalysisService:
             logger.error(f"Error updating analysis status: {str(e)}")
             raise
     
+    async def update_analysis_status_by_fp(
+        self,
+        analysis_fp: str,
+        status: AnalysisStatus
+    ) -> None:
+        """Update the status of an analysis record by fingerprint"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp
+                )
+                result = await session.execute(stmt)
+                analysis = result.scalar_one_or_none()
+                
+                if not analysis:
+                    logger.error(f"Analysis record not found with fp: {analysis_fp}")
+                    return
+                
+                analysis.status = status
+                
+                # If completed, set the completed_at timestamp
+                if status == AnalysisStatus.COMPLETED:
+                    analysis.completed_at = datetime.now()
+                    
+                await session.commit()
+                logger.info(f"Updated analysis with fp {analysis_fp} status to {status.value}")
+                
+        except Exception as e:
+            logger.error(f"Error updating analysis status: {str(e)}")
+            raise
+    
     async def update_original_content(
         self,
         analysis_id: int,
         content: str
     ) -> None:
-        """Update the original content of an analysis record"""
+        """Update the original content of an analysis record by ID"""
         try:
             async with async_session_maker() as session:
                 stmt = select(DocumentAnalysis).where(
@@ -423,6 +533,32 @@ class DocumentAnalysisService:
         except Exception as e:
             logger.error(f"Error updating original content: {str(e)}")
             raise
+            
+    async def update_original_content_by_fp(
+        self,
+        analysis_fp: str,
+        content: str
+    ) -> None:
+        """Update the original content of an analysis record by fingerprint"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp
+                )
+                result = await session.execute(stmt)
+                analysis = result.scalar_one_or_none()
+                
+                if not analysis:
+                    logger.error(f"Analysis record not found with fp: {analysis_fp}")
+                    return
+                
+                analysis.original_content = content
+                await session.commit()
+                logger.info(f"Updated original content for analysis with fp {analysis_fp}")
+                
+        except Exception as e:
+            logger.error(f"Error updating original content: {str(e)}")
+            raise
     
     async def update_analysis_record(
         self,
@@ -431,7 +567,7 @@ class DocumentAnalysisService:
         suggested_changes: Dict[str, Any],
         status: AnalysisStatus = AnalysisStatus.COMPLETED
     ) -> None:
-        """Update an analysis record with analysis results"""
+        """Update an analysis record with analysis results by ID"""
         try:
             async with async_session_maker() as session:
                 stmt = select(DocumentAnalysis).where(
@@ -460,6 +596,47 @@ class DocumentAnalysisService:
                 
                 await session.commit()
                 logger.info(f"Updated analysis record {analysis_id} with results")
+                
+        except Exception as e:
+            logger.error(f"Error updating analysis record: {str(e)}")
+            raise
+
+    async def update_analysis_record_by_fp(
+        self,
+        analysis_fp: str,
+        analysis_data: Dict[str, Any],
+        suggested_changes: Dict[str, Any],
+        status: AnalysisStatus = AnalysisStatus.COMPLETED
+    ) -> None:
+        """Update an analysis record with analysis results by fingerprint"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp
+                )
+                result = await session.execute(stmt)
+                analysis = result.scalar_one_or_none()
+                
+                if not analysis:
+                    logger.error(f"Analysis record not found with fp: {analysis_fp}")
+                    return
+                
+                # Update the analysis record with the results
+                analysis.analysis = analysis_data.get("analysis")
+                analysis.key_points = analysis_data.get("key_points", [])
+                analysis.conflicts = analysis_data.get("conflicts", [])
+                analysis.recommendations = analysis_data.get("recommendations", [])
+                analysis.chunk_analyses = analysis_data.get("chunk_analyses", [])
+                analysis.total_chunks_analyzed = analysis_data.get("total_chunks_analyzed", 0)
+                analysis.processing_time_seconds = analysis_data.get("processing_time_seconds", 0)
+                analysis.suggested_changes = suggested_changes
+                analysis.status = status
+                
+                if status == AnalysisStatus.COMPLETED:
+                    analysis.completed_at = datetime.now()
+                
+                await session.commit()
+                logger.info(f"Updated analysis record with fp {analysis_fp} with results")
                 
         except Exception as e:
             logger.error(f"Error updating analysis record: {str(e)}")
