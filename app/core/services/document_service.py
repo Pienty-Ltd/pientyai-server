@@ -8,7 +8,7 @@ from docx import Document
 from PyPDF2 import PdfReader
 import asyncio
 from app.core.config import config
-from app.database.models.db_models import File, KnowledgeBase, FileStatus, User, Organization
+from app.database.models.db_models import File, KnowledgeBase, FileStatus, User, Organization, user_organizations
 from app.core.services.openai_service import OpenAIService
 from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
