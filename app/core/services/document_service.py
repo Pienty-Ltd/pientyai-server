@@ -339,6 +339,95 @@ class DocumentService:
             logger.error(f"Error extracting text from document: {str(e)}")
             raise
 
+    async def search_chunks_for_organization(
+        self,
+        organization_id: int,
+        query: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[KnowledgeBase], int]:
+        """
+        Search through chunks in a specific organization using semantic search
+        Returns a tuple of (chunks, total_count)
+        This uses vector similarity search and pagination
+        """
+        try:
+            logger.info(f"Starting semantic chunk search for org {organization_id}. Query: '{query}'")
+            start_time = datetime.now()
+
+            # Generate embedding for search query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
+                raise ValueError("Failed to generate embedding for search query")
+
+            embedding_duration = (datetime.now() - start_time).total_seconds()
+            logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
+            
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            
+            async with async_session_maker() as session:
+                # Use raw SQL with window functions for better performance
+                # This performs pagination and counting in a single query
+                search_start = datetime.now()
+                
+                query_sql = text("""
+                    WITH ranked_results AS (
+                        SELECT 
+                            kb.*,
+                            COUNT(*) OVER() as total_count,
+                            ROW_NUMBER() OVER(ORDER BY l2_distance(kb.embedding, :query_embedding::vector)) as row_num
+                        FROM 
+                            knowledge_base kb
+                        WHERE
+                            kb.organization_id = :org_id
+                            AND kb.is_knowledge_base = TRUE
+                    )
+                    SELECT * FROM ranked_results
+                    WHERE row_num > :offset AND row_num <= :offset_end
+                    ORDER BY row_num
+                """)
+                
+                result = await session.execute(
+                    query_sql, 
+                    {
+                        "query_embedding": query_embedding[0],
+                        "org_id": organization_id,
+                        "offset": offset,
+                        "offset_end": offset + per_page
+                    }
+                )
+                
+                rows = result.fetchall()
+                
+                # Extract total count from first row if results exist
+                total_count = rows[0].total_count if rows else 0
+                
+                # Convert rows to KnowledgeBase objects
+                chunks = [
+                    KnowledgeBase(
+                        id=row.id,
+                        fp=row.fp,
+                        file_id=row.file_id,
+                        organization_id=row.organization_id,
+                        chunk_index=row.chunk_index,
+                        content=row.content,
+                        embedding=row.embedding,
+                        meta_info=row.meta_info,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at
+                    ) for row in rows
+                ]
+
+                search_duration = (datetime.now() - search_start).total_seconds()
+                logger.info(f"Found {len(chunks)} relevant chunks for org {organization_id} (Total: {total_count}, Search duration: {search_duration}s)")
+
+                return chunks, total_count
+        except Exception as e:
+            logger.error(f"Error searching chunks for organization: {str(e)}", exc_info=True)
+            raise
+    
     async def search_documents(
         self,
         organization_id: int,
@@ -346,8 +435,10 @@ class DocumentService:
         limit: int = 5
     ) -> List[KnowledgeBase]:
         """
+        [DEPRECATED - Use search_documents_for_organization or search_chunks_for_organization instead]
         Search through documents using semantic search with embeddings
         Only searches through knowledge base documents (is_knowledge_base=True)
+        Returns knowledge base chunks
         """
         try:
             logger.info(f"Starting semantic search for org {organization_id}. Query: '{query}'")
@@ -390,7 +481,7 @@ class DocumentService:
             logger.error(f"Error searching documents: {str(e)}", exc_info=True)
             raise
                 
-    async def search_documents_for_user(
+    async def search_chunks_for_user(
         self,
         user_id: int,
         query: str,
@@ -398,12 +489,12 @@ class DocumentService:
         per_page: int = 20
     ) -> Tuple[List[KnowledgeBase], int]:
         """
-        Search through all documents the user has access to across all organizations
+        Search through all document chunks the user has access to across all organizations
         Returns a tuple of (chunks, total_count)
         This uses a single optimized SQL query with window functions for pagination
         """
         try:
-            logger.info(f"Starting semantic search across all orgs for user {user_id}. Query: '{query}'")
+            logger.info(f"Starting semantic chunk search across all orgs for user {user_id}. Query: '{query}'")
             start_time = datetime.now()
 
             # Generate embedding for search query
@@ -480,6 +571,245 @@ class DocumentService:
 
                 return chunks, total_count
         except Exception as e:
+            logger.error(f"Error searching chunks for user: {str(e)}", exc_info=True)
+            raise
+            
+    async def search_documents_for_organization(
+        self,
+        organization_id: int,
+        query: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[File], int]:
+        """
+        Search for documents (files) within a specific organization
+        Returns a tuple of (files, total_count)
+        This uses vector similarity search and pagination
+        """
+        try:
+            # Generate embedding for query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
+                raise ValueError("Failed to generate embedding for search query")
+            
+            embedding = query_embedding[0]
+            
+            # Calculate offset
+            offset = (page - 1) * per_page
+            
+            async with async_session_maker() as session:
+                # First get the total count with a separate query for better performance
+                count_statement = text("""
+                    SELECT COUNT(DISTINCT f.id) as total_count
+                    FROM files f
+                    JOIN knowledge_base kb ON f.id = kb.file_id
+                    WHERE f.organization_id = :org_id
+                    AND f.status = 'COMPLETED'
+                    AND kb.embedding IS NOT NULL
+                    AND (
+                        f.filename ILIKE :query_text
+                        OR kb.content ILIKE :query_text
+                        OR kb.embedding <=> :embedding < 0.2
+                    )
+                """)
+                
+                count_result = await session.execute(
+                    count_statement,
+                    {
+                        "org_id": organization_id,
+                        "query_text": f"%{query}%", 
+                        "embedding": embedding
+                    }
+                )
+                total_count = count_result.scalar() or 0
+                
+                # Now get the actual results with pagination
+                # Note: We're using DISTINCT ON to get one row per file, ordered by the best match
+                statement = text("""
+                    WITH ranked_files AS (
+                        SELECT DISTINCT ON (f.id) 
+                            f.id,
+                            f.fp,
+                            f.filename,
+                            f.file_type,
+                            f.status,
+                            f.created_at,
+                            f.organization_id,
+                            f.is_knowledge_base,
+                            f.s3_key,
+                            f.user_id,
+                            (
+                                SELECT COUNT(*) 
+                                FROM knowledge_base kb_count 
+                                WHERE kb_count.file_id = f.id
+                            ) as chunk_count,
+                            MIN(kb.embedding <=> :embedding) as similarity_score
+                        FROM files f
+                        JOIN knowledge_base kb ON f.id = kb.file_id
+                        WHERE f.organization_id = :org_id
+                        AND f.status = 'COMPLETED'
+                        AND kb.embedding IS NOT NULL
+                        AND (
+                            f.filename ILIKE :query_text
+                            OR kb.content ILIKE :query_text
+                            OR kb.embedding <=> :embedding < 0.2
+                        )
+                        GROUP BY f.id, f.fp, f.filename, f.file_type, f.status, 
+                            f.created_at, f.organization_id, f.is_knowledge_base, f.s3_key, f.user_id
+                    )
+                    SELECT * FROM ranked_files
+                    ORDER BY similarity_score
+                    LIMIT :limit OFFSET :offset
+                """)
+                
+                result = await session.execute(
+                    statement,
+                    {
+                        "org_id": organization_id,
+                        "query_text": f"%{query}%", 
+                        "embedding": embedding,
+                        "limit": per_page,
+                        "offset": offset
+                    }
+                )
+                
+                # Convert the result to File objects
+                files = []
+                for row in result:
+                    file = File(
+                        id=row.id,
+                        fp=row.fp,
+                        filename=row.filename,
+                        file_type=row.file_type,
+                        status=row.status,
+                        created_at=row.created_at,
+                        organization_id=row.organization_id,
+                        is_knowledge_base=row.is_knowledge_base,
+                        s3_key=row.s3_key,
+                        user_id=row.user_id
+                    )
+                    # Add chunk_count as an attribute
+                    setattr(file, 'chunk_count', row.chunk_count)
+                    files.append(file)
+                
+                return files, total_count
+                
+        except Exception as e:
+            logger.error(f"Error searching documents in organization {organization_id}: {str(e)}", exc_info=True)
+            raise
+            
+    async def search_documents_for_user(
+        self,
+        user_id: int,
+        query: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[File], int]:
+        """
+        Search for documents (files) the user has access to across all organizations
+        Returns a tuple of (files, total_count)
+        This uses a single optimized SQL query with vector similarity search and window functions for pagination
+        """
+        try:
+            logger.info(f"Starting document search across all orgs for user {user_id}. Query: '{query}'")
+            start_time = datetime.now()
+
+            # Generate embedding for search query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
+                raise ValueError("Failed to generate embedding for search query")
+
+            embedding_duration = (datetime.now() - start_time).total_seconds()
+            logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
+
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            
+            async with async_session_maker() as session:
+                # Use raw SQL with window functions for better performance
+                # This performs pagination and counting in a single query
+                search_start = datetime.now()
+                
+                # First find most relevant chunks, then get their parent files with aggregation
+                query_sql = text("""
+                    WITH relevant_chunks AS (
+                        SELECT 
+                            kb.file_id,
+                            MIN(l2_distance(kb.embedding, :query_embedding::vector)) as min_distance
+                        FROM 
+                            knowledge_base kb
+                        JOIN
+                            organizations org ON kb.organization_id = org.id
+                        JOIN
+                            user_organizations uo ON org.id = uo.organization_id
+                        WHERE
+                            uo.user_id = :user_id
+                            AND kb.is_knowledge_base = TRUE
+                        GROUP BY kb.file_id
+                    ),
+                    ranked_files AS (
+                        SELECT 
+                            f.*,
+                            org.fp as organization_fp,
+                            rc.min_distance,
+                            COUNT(*) OVER() as total_count,
+                            ROW_NUMBER() OVER(ORDER BY rc.min_distance) as row_num
+                        FROM 
+                            files f
+                        JOIN
+                            relevant_chunks rc ON f.id = rc.file_id
+                        JOIN
+                            organizations org ON f.organization_id = org.id
+                        WHERE
+                            f.is_knowledge_base = TRUE
+                    )
+                    SELECT * FROM ranked_files
+                    WHERE row_num > :offset AND row_num <= :offset_end
+                    ORDER BY row_num
+                """)
+                
+                result = await session.execute(
+                    query_sql, 
+                    {
+                        "query_embedding": query_embedding[0],
+                        "user_id": user_id,
+                        "offset": offset,
+                        "offset_end": offset + per_page
+                    }
+                )
+                
+                rows = result.fetchall()
+                
+                # Extract total count from first row if results exist
+                total_count = rows[0].total_count if rows else 0
+                
+                # Convert rows to File objects
+                files = [
+                    File(
+                        id=row.id,
+                        fp=row.fp,
+                        filename=row.filename,
+                        file_type=row.file_type,
+                        s3_key=row.s3_key,
+                        status=row.status,
+                        file_size=row.file_size,
+                        chunk_count=row.chunk_count,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at,
+                        updated_at=row.updated_at,
+                        user_id=row.user_id,
+                        organization_id=row.organization_id,
+                        organization_fp=row.organization_fp
+                    ) for row in rows
+                ]
+
+                search_duration = (datetime.now() - search_start).total_seconds()
+                logger.info(f"Found {len(files)} relevant documents for user {user_id} (Total: {total_count}, Search duration: {search_duration}s)")
+
+                return files, total_count
+        except Exception as e:
             logger.error(f"Error searching documents for user: {str(e)}", exc_info=True)
             raise
 
@@ -487,9 +817,21 @@ class DocumentService:
         self,
         user_id: int,
         page: int = 1,
-        per_page: int = 20
+        per_page: int = 20,
+        organization_fp: Optional[str] = None
     ) -> Tuple[List[File], int]:
-        """Get all documents accessible to a user across their organizations"""
+        """
+        Get all documents accessible to a user across their organizations.
+        
+        Args:
+            user_id: ID of the user
+            page: Page number for pagination
+            per_page: Items per page
+            organization_fp: Optional organization fingerprint to filter by organization
+            
+        Returns:
+            Tuple of (documents, total_count)
+        """
         try:
             async with async_session_maker() as session:
                 # Get user's organizations
@@ -503,6 +845,26 @@ class DocumentService:
                     raise ValueError("User not found")
 
                 org_ids = [org.id for org in user.organizations]
+                
+                # If organization fingerprint is provided, filter by that organization
+                if organization_fp:
+                    logger.info(f"Filtering documents by organization fingerprint: {organization_fp}")
+                    
+                    # Get organization by fingerprint
+                    org_stmt = select(Organization).where(
+                        Organization.fp == organization_fp,
+                        Organization.id.in_(org_ids)  # Ensure user has access to this organization
+                    )
+                    result = await session.execute(org_stmt)
+                    organization = result.scalar_one_or_none()
+                    
+                    if not organization:
+                        logger.warning(f"Organization with fingerprint {organization_fp} not found or user has no access")
+                        return [], 0
+                    
+                    # Use only this organization_id for filtering
+                    org_ids = [organization.id]
+                    logger.debug(f"Filtered to organization ID: {organization.id}")
 
                 # Count total documents
                 count_stmt = select(func.count(File.id)).where(
@@ -624,6 +986,209 @@ class DocumentService:
             logger.error(f"Error fetching document by FP: {str(e)}")
             raise
             
+    async def get_document_chunks(
+        self,
+        document_id: int,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[KnowledgeBase], int]:
+        """
+        Get paginated chunks for a specific document by ID
+        Returns a tuple of (chunks, total_count)
+        """
+        try:
+            async with async_session_maker() as session:
+                # Count total chunks
+                count_stmt = select(func.count(KnowledgeBase.id)).where(
+                    KnowledgeBase.file_id == document_id
+                )
+                result = await session.execute(count_stmt)
+                total_count = result.scalar() or 0
+                
+                # Calculate pagination
+                offset = (page - 1) * per_page
+                
+                # Get paginated chunks
+                stmt = select(KnowledgeBase).where(
+                    KnowledgeBase.file_id == document_id
+                ).order_by(
+                    KnowledgeBase.chunk_index
+                ).offset(offset).limit(per_page)
+                
+                result = await session.execute(stmt)
+                chunks = result.scalars().all()
+                
+                return chunks, total_count
+                
+        except Exception as e:
+            logger.error(f"Error getting document chunks: {str(e)}")
+            raise
+            
+    async def get_document_chunks_by_fp(
+        self,
+        document_fp: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[KnowledgeBase], int, Optional[File]]:
+        """
+        Get paginated chunks for a specific document by fingerprint (fp)
+        Returns a tuple of (chunks, total_count, document)
+        """
+        try:
+            async with async_session_maker() as session:
+                # First get the document
+                doc_stmt = select(File).where(
+                    File.fp == document_fp
+                )
+                result = await session.execute(doc_stmt)
+                document = result.scalar_one_or_none()
+                
+                if not document:
+                    return [], 0, None
+                
+                # Now get chunks with pagination
+                chunks, total_count = await self.get_document_chunks(
+                    document_id=document.id,
+                    page=page,
+                    per_page=per_page
+                )
+                
+                return chunks, total_count, document
+                
+        except Exception as e:
+            logger.error(f"Error getting document chunks by FP: {str(e)}")
+            raise
+    
+    async def search_chunks_in_document(
+        self,
+        document_id: int,
+        query: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[KnowledgeBase], int]:
+        """
+        Search through chunks in a specific document using semantic search
+        Returns a tuple of (chunks, total_count)
+        """
+        try:
+            logger.info(f"Starting semantic chunk search in document {document_id}. Query: '{query}'")
+            start_time = datetime.now()
+
+            # Generate embedding for search query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
+                raise ValueError("Failed to generate embedding for search query")
+
+            embedding_duration = (datetime.now() - start_time).total_seconds()
+            logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
+            
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            
+            async with async_session_maker() as session:
+                # Use raw SQL with window functions for better performance
+                # This performs pagination and counting in a single query
+                search_start = datetime.now()
+                
+                query_sql = text("""
+                    WITH ranked_results AS (
+                        SELECT 
+                            kb.*,
+                            COUNT(*) OVER() as total_count,
+                            ROW_NUMBER() OVER(ORDER BY l2_distance(kb.embedding, :query_embedding::vector)) as row_num
+                        FROM 
+                            knowledge_base kb
+                        WHERE
+                            kb.file_id = :document_id
+                    )
+                    SELECT * FROM ranked_results
+                    WHERE row_num > :offset AND row_num <= :offset_end
+                    ORDER BY row_num
+                """)
+                
+                result = await session.execute(
+                    query_sql, 
+                    {
+                        "query_embedding": query_embedding[0],
+                        "document_id": document_id,
+                        "offset": offset,
+                        "offset_end": offset + per_page
+                    }
+                )
+                
+                rows = result.fetchall()
+                
+                # Extract total count from first row if results exist
+                total_count = rows[0].total_count if rows else 0
+                
+                # Convert rows to KnowledgeBase objects
+                chunks = [
+                    KnowledgeBase(
+                        id=row.id,
+                        fp=row.fp,
+                        file_id=row.file_id,
+                        organization_id=row.organization_id,
+                        chunk_index=row.chunk_index,
+                        content=row.content,
+                        embedding=row.embedding,
+                        meta_info=row.meta_info,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at
+                    ) for row in rows
+                ]
+
+                search_duration = (datetime.now() - search_start).total_seconds()
+                logger.info(f"Found {len(chunks)} relevant chunks for document {document_id} (Total: {total_count}, Search duration: {search_duration}s)")
+
+                return chunks, total_count
+        except Exception as e:
+            logger.error(f"Error searching chunks in document: {str(e)}", exc_info=True)
+            raise
+            
+    async def search_chunks_in_document_by_fp(
+        self,
+        document_fp: str,
+        query: str,
+        page: int = 1,
+        per_page: int = 20
+    ) -> Tuple[List[KnowledgeBase], int, Optional[File], Optional[Organization]]:
+        """
+        Search through chunks in a specific document using semantic search, accessing by fingerprint
+        Returns a tuple of (chunks, total_count, document, organization)
+        """
+        try:
+            # First get the document and organization
+            async with async_session_maker() as session:
+                # Build query to find document and its organization
+                stmt = select(File, Organization).join(
+                    Organization, File.organization_id == Organization.id
+                ).where(
+                    File.fp == document_fp
+                )
+                
+                result = await session.execute(stmt)
+                row = result.first()
+                
+                if not row:
+                    return [], 0, None, None
+                    
+                document, organization = row
+                
+                # Now search chunks
+                chunks, total_count = await self.search_chunks_in_document(
+                    document_id=document.id,
+                    query=query,
+                    page=page,
+                    per_page=per_page
+                )
+                
+                return chunks, total_count, document, organization
+                
+        except Exception as e:
+            logger.error(f"Error searching chunks in document by FP: {str(e)}", exc_info=True)
+            raise
+    
     async def get_document_by_fp_for_user(
         self,
         user_id: int,

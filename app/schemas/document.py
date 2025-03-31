@@ -16,6 +16,7 @@ class DocumentResponse(BaseModel):
     chunks_count: int
     organization_id: int
     is_knowledge_base: Optional[bool] = True
+    organization_fp: Optional[str] = None
 
 class KnowledgeBaseResponse(BaseModel):
     fp: str
@@ -25,6 +26,10 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: datetime
     is_knowledge_base: bool = True
 
+class DocumentWithChunksResponse(DocumentResponse):
+    """Extended DocumentResponse that includes the document chunks"""
+    chunks: List[KnowledgeBaseResponse] = []
+    
 class PaginatedDocumentResponse(BaseModel):
     documents: List[DocumentResponse]
     total_count: int
