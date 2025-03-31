@@ -22,7 +22,7 @@ class KnowledgeBaseResponse(BaseModel):
     fp: str
     chunk_index: int
     content: str
-    meta_info: dict
+    meta_info: Dict[str, Any]
     created_at: datetime
     is_knowledge_base: bool = True
 

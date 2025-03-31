@@ -1,9 +1,22 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query, BackgroundTasks, Request
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime
 import mimetypes
 import math
+import json
+
+# Helper function to parse meta_info from string to dict
+def parse_meta_info(meta_info_str: Optional[str]) -> Dict[str, Any]:
+    """Parse meta_info string to dict"""
+    if not meta_info_str:
+        return {}
+    try:
+        if isinstance(meta_info_str, dict):
+            return meta_info_str
+        return json.loads(meta_info_str)
+    except json.JSONDecodeError:
+        return {}
 from app.core.services.document_service import DocumentService
 from app.database.models import User, Organization
 from app.api.v1.auth import get_current_user
@@ -347,7 +360,7 @@ async def get_document_chunks(
                 fp=chunk.fp,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
-                meta_info=chunk.meta_info,
+                meta_info=parse_meta_info(chunk.meta_info),
                 created_at=chunk.created_at,
                 is_knowledge_base=chunk.is_knowledge_base
             ) for chunk in chunks
@@ -431,7 +444,7 @@ async def search_document_chunks(
                 fp=chunk.fp,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
-                meta_info=chunk.meta_info,
+                meta_info=parse_meta_info(chunk.meta_info),
                 created_at=chunk.created_at,
                 is_knowledge_base=chunk.is_knowledge_base
             ) for chunk in chunks
@@ -513,7 +526,7 @@ async def get_document(
                     fp=chunk.fp,
                     chunk_index=chunk.chunk_index,
                     content=chunk.content,
-                    meta_info=chunk.meta_info,
+                    meta_info=parse_meta_info(chunk.meta_info),
                     created_at=chunk.created_at,
                     is_knowledge_base=chunk.is_knowledge_base
                 ) for chunk in document.knowledge_base
@@ -895,7 +908,7 @@ async def search_organization_document_chunks(
                 fp=chunk.fp,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
-                meta_info=chunk.meta_info,
+                meta_info=parse_meta_info(chunk.meta_info),
                 created_at=chunk.created_at,
                 is_knowledge_base=chunk.is_knowledge_base
             ) for chunk in results
@@ -956,7 +969,7 @@ async def search_user_document_chunks(
                 fp=chunk.fp,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
-                meta_info=chunk.meta_info,
+                meta_info=parse_meta_info(chunk.meta_info),
                 created_at=chunk.created_at,
                 is_knowledge_base=chunk.is_knowledge_base
             ) for chunk in results
