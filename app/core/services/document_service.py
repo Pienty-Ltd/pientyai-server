@@ -1200,16 +1200,23 @@ class DocumentService:
         """
         try:
             async with async_session_maker() as session:
-                # Build a more efficient query that joins with user_organizations
+                # Build a more efficient query using the user_organizations association table
                 # to find the document in any organization the user has access to
+                
+                # First, get all organizations the user has access to
+                org_query = select(Organization.id).join(
+                    user_organizations,
+                    Organization.id == user_organizations.c.organization_id
+                ).where(
+                    user_organizations.c.user_id == user_id
+                )
+                
+                # Then find the document in any of those organizations
                 stmt = select(File, Organization).join(
                     Organization, File.organization_id == Organization.id
-                ).join(
-                    "user_organizations", # Join through the user_organizations association table
-                    Organization.id == Organization.user_organizations.c.organization_id
                 ).where(
                     File.fp == document_fp,
-                    Organization.user_organizations.c.user_id == user_id
+                    Organization.id.in_(org_query)
                 ).options(
                     joinedload(File.knowledge_base)
                 )
