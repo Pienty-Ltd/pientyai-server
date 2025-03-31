@@ -288,18 +288,14 @@ async def get_document(
         # Validate document fingerprint
         document_fp = await validate_document_fp(document_fp)
 
-        # Get document service
+        # Get document service and find document with a single query
         document_service = DocumentService()
-        
-        # Find the document across all organizations the user has access to
-        document = None
-        for organization in current_user.organizations:
-            temp_doc = await document_service.get_document_by_fp(organization.id, document_fp)
-            if temp_doc:
-                document = temp_doc
-                break
+        document, organization = await document_service.get_document_by_fp_for_user(
+            user_id=current_user.id,
+            document_fp=document_fp
+        )
                 
-        if not document:
+        if not document or not organization:
             logger.warning(f"Document not found: FP {document_fp}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -309,12 +305,8 @@ async def get_document(
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"Retrieved document {document_fp} (Duration: {duration}s)")
 
-        # Get the organization fingerprint for the document
-        org_fp = None
-        for org in current_user.organizations:
-            if org.id == document.organization_id:
-                org_fp = org.fp
-                break
+        # We already have the organization from the query
+        org_fp = organization.fp
 
         return BaseResponse(
             success=True,
@@ -351,28 +343,15 @@ async def delete_document(
         # Validate document fingerprint
         document_fp = await validate_document_fp(document_fp)
         
-        # Get document service
+        # Get document service and delete document with a single query
         document_service = DocumentService()
         
-        # Find the document across all organizations the user has access to
-        document = None
-        organization = None
-        for org in current_user.organizations:
-            temp_doc = await document_service.get_document_by_fp(org.id, document_fp)
-            if temp_doc:
-                document = temp_doc
-                organization = org
-                break
+        # Delete the document across all organizations the user has access to
+        success = await document_service.delete_document_by_fp_for_user(
+            user_id=current_user.id,
+            document_fp=document_fp
+        )
                 
-        if not document or not organization:
-            logger.warning(f"Document not found: FP {document_fp}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document not found"
-            )
-
-        success = await document_service.delete_document_by_fp(organization.id, document_fp)
-
         if not success:
             logger.warning(f"Document not found for deletion: FP {document_fp}")
             raise HTTPException(

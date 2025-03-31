@@ -386,6 +386,74 @@ class DocumentService:
                         logger.debug(f"Chunk {chunk.id} similarity score: {similarity}")
 
                 return chunks
+                
+    async def search_documents_for_user(
+        self,
+        user_id: int,
+        query: str,
+        page: int = 1,
+        per_page: int = 20,
+        limit: int = 100
+    ) -> Tuple[List[KnowledgeBase], int]:
+        """
+        Search through all documents the user has access to across all organizations
+        Returns a tuple of (chunks, total_count)
+        """
+        try:
+            logger.info(f"Starting semantic search across all orgs for user {user_id}. Query: '{query}'")
+            start_time = datetime.now()
+
+            # Generate embedding for search query
+            query_embedding = await self.openai_service.create_embeddings([query])
+            if not query_embedding or len(query_embedding) == 0:
+                logger.error("Failed to generate embedding for search query")
+                raise ValueError("Failed to generate embedding for search query")
+
+            embedding_duration = (datetime.now() - start_time).total_seconds()
+            logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
+
+            async with async_session_maker() as session:
+                # Build a query that joins with user_organizations to find documents
+                # across all organizations the user has access to
+                
+                # First get the total count
+                count_stmt = select(func.count()).select_from(KnowledgeBase).join(
+                    Organization, KnowledgeBase.organization_id == Organization.id
+                ).join(
+                    "user_organizations",
+                    Organization.id == Organization.user_organizations.c.organization_id
+                ).where(
+                    Organization.user_organizations.c.user_id == user_id,
+                    KnowledgeBase.is_knowledge_base == True
+                )
+                
+                count_result = await session.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+                
+                # Calculate pagination
+                offset = (page - 1) * per_page
+                
+                # Then get the actual results with pagination
+                search_start = datetime.now()
+                stmt = select(KnowledgeBase).join(
+                    Organization, KnowledgeBase.organization_id == Organization.id
+                ).join(
+                    "user_organizations",
+                    Organization.id == Organization.user_organizations.c.organization_id
+                ).where(
+                    Organization.user_organizations.c.user_id == user_id,
+                    KnowledgeBase.is_knowledge_base == True
+                ).order_by(
+                    func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
+                ).limit(per_page).offset(offset)
+
+                result = await session.execute(stmt)
+                chunks = result.scalars().all()
+
+                search_duration = (datetime.now() - search_start).total_seconds()
+                logger.info(f"Found {len(chunks)} relevant chunks for user {user_id} (Total: {total_count}, Search duration: {search_duration}s)")
+
+                return chunks, total_count
 
         except Exception as e:
             logger.error(f"Error searching documents: {str(e)}", exc_info=True)
@@ -531,6 +599,42 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error fetching document by FP: {str(e)}")
             raise
+            
+    async def get_document_by_fp_for_user(
+        self,
+        user_id: int,
+        document_fp: str
+    ) -> Tuple[Optional[File], Optional[Organization]]:
+        """
+        Get a document by fingerprint across all organizations the user has access to
+        Returns both the document and the organization it belongs to
+        """
+        try:
+            async with async_session_maker() as session:
+                # Build a more efficient query that joins with user_organizations
+                # to find the document in any organization the user has access to
+                stmt = select(File, Organization).join(
+                    Organization, File.organization_id == Organization.id
+                ).join(
+                    "user_organizations", # Join through the user_organizations association table
+                    Organization.id == Organization.user_organizations.c.organization_id
+                ).where(
+                    File.fp == document_fp,
+                    Organization.user_organizations.c.user_id == user_id
+                ).options(
+                    joinedload(File.knowledge_base)
+                )
+                
+                result = await session.execute(stmt)
+                row = result.first()
+                
+                if row:
+                    return row[0], row[1]  # Return document and organization
+                return None, None
+                
+        except Exception as e:
+            logger.error(f"Error fetching document by FP for user: {str(e)}")
+            raise
 
     async def delete_document(
         self,
@@ -614,6 +718,54 @@ class DocumentService:
 
         except Exception as e:
             logger.error(f"Error deleting document by FP: {str(e)}")
+            raise
+            
+    async def delete_document_by_fp_for_user(
+        self,
+        user_id: int,
+        document_fp: str
+    ) -> bool:
+        """
+        Delete a document and its associated knowledge base entries, 
+        checking across all organizations the user has access to
+        """
+        try:
+            # First find the document and its organization
+            document, organization = await self.get_document_by_fp_for_user(user_id, document_fp)
+            
+            if not document or not organization:
+                logger.warning(f"Document {document_fp} not found for user {user_id}")
+                return False
+                
+            # Now we can proceed with deletion
+            async with async_session_maker() as session:
+                # Delete knowledge base entries
+                kb_stmt = delete(KnowledgeBase).where(
+                    KnowledgeBase.file_id == document.id
+                )
+                await session.execute(kb_stmt)
+
+                # Delete the document record
+                file_stmt = delete(File).where(
+                    File.fp == document_fp,
+                    File.organization_id == organization.id
+                )
+                await session.execute(file_stmt)
+
+                # Delete from S3
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=document.s3_key
+                    )
+                except Exception as e:
+                    logger.warning(f"Error deleting file from S3: {str(e)}")
+
+                await session.commit()
+                return True
+
+        except Exception as e:
+            logger.error(f"Error deleting document by FP for user: {str(e)}")
             raise
 
     async def get_file_from_s3(self, s3_key: str) -> Optional[bytes]:
