@@ -11,7 +11,6 @@ from app.schemas.document import DocumentResponse, KnowledgeBaseResponse, Pagina
 from app.database.models.db_models import FileStatus
 from app.api.v1.middlewares.validation_middleware import (
     validate_pagination_parameters,
-    validate_document_id,
     validate_document_fp,
     validate_organization_id,
     validate_organization_fp
@@ -146,7 +145,9 @@ async def list_user_documents(
     """List all documents accessible to the current user across their organizations"""
     try:
         # Validate pagination parameters
-        page, per_page = await validate_pagination_parameters(request, page, per_page)
+        validated_page, validated_per_page = await validate_pagination_parameters(request, page, per_page)
+        page = validated_page if validated_page is not None else page
+        per_page = validated_per_page if validated_per_page is not None else per_page
 
         logger.info(f"Fetching documents for user {current_user.id}, page {page}, per_page {per_page}")
         start_time = datetime.now()
@@ -195,10 +196,10 @@ async def list_user_documents(
             detail="An error occurred while fetching documents"
         )
 
-@router.get("/organization/{org_id}", response_model=BaseResponse[PaginatedDocumentResponse])
+@router.get("/organization/{org_fp}", response_model=BaseResponse[PaginatedDocumentResponse])
 async def list_organization_documents(
     request: Request,
-    org_id: int,
+    org_fp: str,
     page: int = Query(1, gt=0, description="Page number"),
     per_page: int = Query(20, gt=0, le=100, description="Items per page, max 100"),
     current_user: User = Depends(get_current_user)
@@ -206,30 +207,42 @@ async def list_organization_documents(
     """List all documents for a specific organization with pagination"""
     try:
         # Validate parameters
-        org_id = await validate_organization_id(org_id)
-        page, per_page = await validate_pagination_parameters(request, page, per_page)
+        org_fp = await validate_organization_fp(org_fp)
+        validated_page, validated_per_page = await validate_pagination_parameters(request, page, per_page)
+        page = validated_page if validated_page is not None else page
+        per_page = validated_per_page if validated_per_page is not None else per_page
 
-        logger.info(f"Fetching documents for organization {org_id}, page {page}, per_page {per_page}")
+        logger.info(f"Fetching documents for organization {org_fp}, page {page}, per_page {per_page}")
         start_time = datetime.now()
 
+        # Fetch organization by fingerprint
+        document_service = DocumentService()
+        organization = await document_service.get_organization_by_fp(org_fp)
+        
+        if not organization:
+            logger.warning(f"Organization not found: FP {org_fp}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found"
+            )
+        
         # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_id}")
+        if not any(org.id == organization.id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to access org {org_fp}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
             )
 
-        document_service = DocumentService()
         documents, total_count = await document_service.get_organization_documents_paginated(
-            organization_id=org_id,
+            organization_id=organization.id,
             page=page,
             per_page=per_page
         )
 
         total_pages = math.ceil(total_count / per_page)
         duration = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Retrieved {len(documents)} documents for org {org_id} (Total: {total_count}, Duration: {duration}s)")
+        logger.info(f"Retrieved {len(documents)} documents for org {org_fp} (Total: {total_count}, Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -248,7 +261,8 @@ async def list_organization_documents(
                 total_count=total_count,
                 total_pages=total_pages,
                 current_page=page,
-                per_page=per_page
+                per_page=per_page,
+                organization_fp=org_fp
             )
         )
 
@@ -261,33 +275,32 @@ async def list_organization_documents(
             detail="An error occurred while fetching organization documents"
         )
 
-@router.get("/organization/{org_id}/{document_fp}", response_model=BaseResponse[DocumentResponse])
+@router.get("/document/{document_fp}", response_model=BaseResponse[DocumentResponse])
 async def get_document(
-    org_id: int,
     document_fp: str,
     current_user: User = Depends(get_current_user)
 ):
     """Get a specific document by fingerprint (fp)"""
     try:
-        logger.info(f"Fetching document {document_fp} from organization {org_id}")
+        logger.info(f"Fetching document {document_fp}")
         start_time = datetime.now()
 
         # Validate document fingerprint
         document_fp = await validate_document_fp(document_fp)
 
-        # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_fp} in org {org_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
-            )
-
+        # Get document service
         document_service = DocumentService()
-        document = await document_service.get_document_by_fp(org_id, document_fp)
-
+        
+        # Find the document across all organizations the user has access to
+        document = None
+        for organization in current_user.organizations:
+            temp_doc = await document_service.get_document_by_fp(organization.id, document_fp)
+            if temp_doc:
+                document = temp_doc
+                break
+                
         if not document:
-            logger.warning(f"Document not found: FP {document_fp} in org {org_id}")
+            logger.warning(f"Document not found: FP {document_fp}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
@@ -295,6 +308,13 @@ async def get_document(
 
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"Retrieved document {document_fp} (Duration: {duration}s)")
+
+        # Get the organization fingerprint for the document
+        org_fp = None
+        for org in current_user.organizations:
+            if org.id == document.organization_id:
+                org_fp = org.fp
+                break
 
         return BaseResponse(
             success=True,
@@ -318,33 +338,43 @@ async def get_document(
             detail="An error occurred while fetching the document"
         )
 
-@router.delete("/organization/{org_id}/{document_fp}", response_model=BaseResponse)
+@router.delete("/document/{document_fp}", response_model=BaseResponse)
 async def delete_document(
-    org_id: int,
     document_fp: str,
     current_user: User = Depends(get_current_user)
 ):
     """Delete a document and its associated knowledge base entries by fingerprint (fp)"""
     try:
-        logger.info(f"Attempting to delete document {document_fp} from organization {org_id}")
+        logger.info(f"Attempting to delete document {document_fp}")
         start_time = datetime.now()
 
         # Validate document fingerprint
         document_fp = await validate_document_fp(document_fp)
-
-        # Check if user has access to organization
-        if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to delete document {document_fp} in org {org_id}")
+        
+        # Get document service
+        document_service = DocumentService()
+        
+        # Find the document across all organizations the user has access to
+        document = None
+        organization = None
+        for org in current_user.organizations:
+            temp_doc = await document_service.get_document_by_fp(org.id, document_fp)
+            if temp_doc:
+                document = temp_doc
+                organization = org
+                break
+                
+        if not document or not organization:
+            logger.warning(f"Document not found: FP {document_fp}")
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to organization"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found"
             )
 
-        document_service = DocumentService()
-        success = await document_service.delete_document_by_fp(org_id, document_fp)
+        success = await document_service.delete_document_by_fp(organization.id, document_fp)
 
         if not success:
-            logger.warning(f"Document not found for deletion: FP {document_fp} in org {org_id}")
+            logger.warning(f"Document not found for deletion: FP {document_fp}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
@@ -371,7 +401,7 @@ async def delete_document(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    organization_id: int = Query(..., description="Organization ID to upload the document to"),
+    organization_fp: str = Query(..., description="Organization fingerprint to upload the document to"),
     is_knowledge_base: bool = Query(True, description="Whether the document is for knowledge base (True) or for analysis (False)"),
     current_user: User = Depends(get_current_user)
 ):
@@ -382,7 +412,7 @@ async def upload_document(
     - Set is_knowledge_base=False for documents that will be analyzed against the knowledge base
     """
     try:
-        logger.info(f"Processing upload request for file {file.filename} to organization {organization_id} (knowledge_base: {is_knowledge_base})")
+        logger.info(f"Processing upload request for file {file.filename} to organization {organization_fp} (knowledge_base: {is_knowledge_base})")
         start_time = datetime.now()
 
         # Enhanced file validation
@@ -397,10 +427,24 @@ async def upload_document(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file format or corrupted file"
             )
+            
+        # Validate organization fingerprint
+        organization_fp = await validate_organization_fp(organization_fp)
+        
+        # Fetch organization by fingerprint
+        document_service = DocumentService()
+        organization = await document_service.get_organization_by_fp(organization_fp)
+        
+        if not organization:
+            logger.warning(f"Organization not found: FP {organization_fp}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found"
+            )
 
         # Check if user has access to organization
-        if not any(org.id == organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to upload to org {organization_id}")
+        if not any(org.id == organization.id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to upload to org {organization_fp}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
@@ -410,12 +454,11 @@ async def upload_document(
         file_content = await file.read()
 
         # Create initial file record with PROCESSING status
-        document_service = DocumentService()
         db_file = await document_service.create_file_record(
             filename=file.filename,
             file_type=file_type,
             user_id=current_user.id,
-            organization_id=organization_id,
+            organization_id=organization.id,
             is_knowledge_base=is_knowledge_base
         )
 
@@ -426,7 +469,7 @@ async def upload_document(
             filename=file.filename,
             file_type=file_type,
             user_id=current_user.id,
-            organization_id=organization_id,
+            organization_id=organization.id,
             db_file_id=db_file.id,
             is_knowledge_base=is_knowledge_base
         )
@@ -444,7 +487,7 @@ async def upload_document(
                 status=db_file.status,
                 created_at=db_file.created_at,
                 chunks_count=0,  # Will be updated during processing
-                organization_id=organization_id,
+                organization_id=organization.id,
                 is_knowledge_base=is_knowledge_base
             )
         )
@@ -458,9 +501,9 @@ async def upload_document(
             detail="An error occurred while uploading the document"
         )
 
-@router.get("/search/{organization_id}", response_model=BaseResponse[List[KnowledgeBaseResponse]])
+@router.get("/search/{org_fp}", response_model=BaseResponse[List[KnowledgeBaseResponse]])
 async def search_documents(
-    organization_id: int,
+    org_fp: str,
     query: str = Query(..., min_length=3),
     limit: int = Query(default=5, gt=0, le=20),
     current_user: User = Depends(get_current_user)
@@ -469,20 +512,33 @@ async def search_documents(
     Search through organization's documents using semantic search
     """
     try:
-        logger.info(f"Searching documents in organization {organization_id} with query '{query}', limit {limit}")
+        logger.info(f"Searching documents in organization {org_fp} with query '{query}', limit {limit}")
         start_time = datetime.now()
 
+        # Validate organization fingerprint
+        org_fp = await validate_organization_fp(org_fp)
+        
+        # Fetch organization by fingerprint
+        document_service = DocumentService()
+        organization = await document_service.get_organization_by_fp(org_fp)
+        
+        if not organization:
+            logger.warning(f"Organization not found: FP {org_fp}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found"
+            )
+
         # Check if user has access to organization
-        if not any(org.id == organization_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to search in org {organization_id}")
+        if not any(org.id == organization.id for org in current_user.organizations):
+            logger.warning(f"Access denied: User {current_user.id} attempted to search in org {org_fp}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
             )
 
-        document_service = DocumentService()
         results = await document_service.search_documents(
-            organization_id=organization_id,
+            organization_id=organization.id,
             query=query,
             limit=limit
         )

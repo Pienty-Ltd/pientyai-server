@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 from app.database.models.db_models import FileStatus
 
 class DocumentUploadRequest(BaseModel):
-    organization_id: int = Field(..., description="Organization ID to upload the document to")
+    organization_fp: str = Field(..., description="Organization fingerprint to upload the document to")
     is_knowledge_base: bool = Field(True, description="Whether the document is for knowledge base (True) or for analysis (False)")
 
 class DocumentResponse(BaseModel):
@@ -31,3 +31,4 @@ class PaginatedDocumentResponse(BaseModel):
     total_pages: int
     current_page: int
     per_page: int
+    organization_fp: Optional[str] = None

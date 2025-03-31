@@ -8,7 +8,7 @@ from docx import Document
 from PyPDF2 import PdfReader
 import asyncio
 from app.core.config import config
-from app.database.models.db_models import File, KnowledgeBase, FileStatus, User
+from app.database.models.db_models import File, KnowledgeBase, FileStatus, User, Organization
 from app.core.services.openai_service import OpenAIService
 from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
@@ -491,6 +491,25 @@ class DocumentService:
             logger.error(f"Error fetching document by ID: {str(e)}")
             raise
     
+    async def get_organization_by_fp(
+        self,
+        organization_fp: str
+    ) -> Optional[Organization]:
+        """Get organization by fingerprint (fp)"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(Organization).where(Organization.fp == organization_fp)
+                result = await session.execute(stmt)
+                organization = result.scalar_one_or_none()
+                
+                if not organization:
+                    logger.warning(f"Organization with fingerprint {organization_fp} not found")
+                return organization
+                
+        except Exception as e:
+            logger.error(f"Error fetching organization by FP: {str(e)}")
+            raise
+            
     async def get_document_by_fp(
         self,
         organization_id: int,
