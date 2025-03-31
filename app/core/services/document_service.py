@@ -518,7 +518,7 @@ class DocumentService:
         organization_id: int,
         document_id: int
     ) -> bool:
-        """Delete a document and its associated knowledge base entries"""
+        """Delete a document and its associated knowledge base entries by ID"""
         try:
             async with async_session_maker() as session:
                 # First verify the document exists and belongs to the organization
@@ -553,6 +553,48 @@ class DocumentService:
 
         except Exception as e:
             logger.error(f"Error deleting document: {str(e)}")
+            raise
+            
+    async def delete_document_by_fp(
+        self,
+        organization_id: int,
+        document_fp: str
+    ) -> bool:
+        """Delete a document and its associated knowledge base entries by fingerprint (fp)"""
+        try:
+            async with async_session_maker() as session:
+                # First verify the document exists and belongs to the organization
+                document = await self.get_document_by_fp(organization_id, document_fp)
+                if not document:
+                    return False
+
+                # Delete knowledge base entries
+                kb_stmt = delete(KnowledgeBase).where(
+                    KnowledgeBase.file_id == document.id
+                )
+                await session.execute(kb_stmt)
+
+                # Delete the document record
+                file_stmt = delete(File).where(
+                    File.fp == document_fp,
+                    File.organization_id == organization_id
+                )
+                await session.execute(file_stmt)
+
+                # Delete from S3
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=document.s3_key
+                    )
+                except Exception as e:
+                    logger.warning(f"Error deleting file from S3: {str(e)}")
+
+                await session.commit()
+                return True
+
+        except Exception as e:
+            logger.error(f"Error deleting document by FP: {str(e)}")
             raise
 
     async def get_file_from_s3(self, s3_key: str) -> Optional[bytes]:

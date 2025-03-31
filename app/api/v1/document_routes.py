@@ -12,7 +12,9 @@ from app.database.models.db_models import FileStatus
 from app.api.v1.middlewares.validation_middleware import (
     validate_pagination_parameters,
     validate_document_id,
-    validate_organization_id
+    validate_document_fp,
+    validate_organization_id,
+    validate_organization_fp
 )
 import math
 
@@ -165,7 +167,6 @@ async def list_user_documents(
             data=PaginatedDocumentResponse(
                 documents=[
                     DocumentResponse(
-                        id=doc.id,
                         fp=doc.fp,
                         filename=doc.filename,
                         file_type=doc.file_type,
@@ -235,7 +236,6 @@ async def list_organization_documents(
             data=PaginatedDocumentResponse(
                 documents=[
                     DocumentResponse(
-                        id=doc.id,
                         fp=doc.fp,
                         filename=doc.filename,
                         file_type=doc.file_type,
@@ -261,42 +261,44 @@ async def list_organization_documents(
             detail="An error occurred while fetching organization documents"
         )
 
-@router.get("/organization/{org_id}/{document_id}", response_model=BaseResponse[DocumentResponse])
+@router.get("/organization/{org_id}/{document_fp}", response_model=BaseResponse[DocumentResponse])
 async def get_document(
     org_id: int,
-    document_id: int,
+    document_fp: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Get a specific document by ID"""
+    """Get a specific document by fingerprint (fp)"""
     try:
-        logger.info(f"Fetching document {document_id} from organization {org_id}")
+        logger.info(f"Fetching document {document_fp} from organization {org_id}")
         start_time = datetime.now()
+
+        # Validate document fingerprint
+        document_fp = await validate_document_fp(document_fp)
 
         # Check if user has access to organization
         if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_id} in org {org_id}")
+            logger.warning(f"Access denied: User {current_user.id} attempted to access document {document_fp} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
             )
 
         document_service = DocumentService()
-        document = await document_service.get_document_by_id(org_id, document_id)
+        document = await document_service.get_document_by_fp(org_id, document_fp)
 
         if not document:
-            logger.warning(f"Document not found: ID {document_id} in org {org_id}")
+            logger.warning(f"Document not found: FP {document_fp} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
 
         duration = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Retrieved document {document_id} (Duration: {duration}s)")
+        logger.info(f"Retrieved document {document_fp} (Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
             data=DocumentResponse(
-                id=document.id,
                 fp=document.fp,
                 filename=document.filename,
                 file_type=document.file_type,
@@ -316,37 +318,40 @@ async def get_document(
             detail="An error occurred while fetching the document"
         )
 
-@router.delete("/organization/{org_id}/{document_id}", response_model=BaseResponse)
+@router.delete("/organization/{org_id}/{document_fp}", response_model=BaseResponse)
 async def delete_document(
     org_id: int,
-    document_id: int,
+    document_fp: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a document and its associated knowledge base entries"""
+    """Delete a document and its associated knowledge base entries by fingerprint (fp)"""
     try:
-        logger.info(f"Attempting to delete document {document_id} from organization {org_id}")
+        logger.info(f"Attempting to delete document {document_fp} from organization {org_id}")
         start_time = datetime.now()
+
+        # Validate document fingerprint
+        document_fp = await validate_document_fp(document_fp)
 
         # Check if user has access to organization
         if not any(org.id == org_id for org in current_user.organizations):
-            logger.warning(f"Access denied: User {current_user.id} attempted to delete document {document_id} in org {org_id}")
+            logger.warning(f"Access denied: User {current_user.id} attempted to delete document {document_fp} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to organization"
             )
 
         document_service = DocumentService()
-        success = await document_service.delete_document(org_id, document_id)
+        success = await document_service.delete_document_by_fp(org_id, document_fp)
 
         if not success:
-            logger.warning(f"Document not found for deletion: ID {document_id} in org {org_id}")
+            logger.warning(f"Document not found for deletion: FP {document_fp} in org {org_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
 
         duration = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Deleted document {document_id} successfully (Duration: {duration}s)")
+        logger.info(f"Deleted document {document_fp} successfully (Duration: {duration}s)")
 
         return BaseResponse(
             success=True,
@@ -433,7 +438,6 @@ async def upload_document(
             success=True,
             message="Document upload started. Processing in background.",
             data=DocumentResponse(
-                id=db_file.id,
                 fp=db_file.fp,
                 filename=db_file.filename,
                 file_type=db_file.file_type,
@@ -490,7 +494,6 @@ async def search_documents(
             success=True,
             data=[
                 KnowledgeBaseResponse(
-                    id=result.id,
                     fp=result.fp,
                     chunk_index=result.chunk_index,
                     content=result.content,

@@ -8,7 +8,6 @@ class DocumentUploadRequest(BaseModel):
     is_knowledge_base: bool = Field(True, description="Whether the document is for knowledge base (True) or for analysis (False)")
 
 class DocumentResponse(BaseModel):
-    id: int
     fp: str
     filename: str
     file_type: str
@@ -19,7 +18,6 @@ class DocumentResponse(BaseModel):
     is_knowledge_base: Optional[bool] = True
 
 class KnowledgeBaseResponse(BaseModel):
-    id: int
     fp: str
     chunk_index: int
     content: str

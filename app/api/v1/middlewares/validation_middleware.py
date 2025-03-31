@@ -1,6 +1,6 @@
 from fastapi import Request, HTTPException, status
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 import math
 
 logger = logging.getLogger(__name__)
