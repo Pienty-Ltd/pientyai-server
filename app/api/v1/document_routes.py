@@ -7,7 +7,7 @@ from app.core.services.document_service import DocumentService
 from app.database.models import User, Organization
 from app.api.v1.auth import get_current_user
 from app.schemas.base import BaseResponse
-from app.schemas.document import DocumentResponse, KnowledgeBaseResponse, PaginatedDocumentResponse
+from app.schemas.document import DocumentResponse, KnowledgeBaseResponse, PaginatedDocumentResponse, PaginatedKnowledgeBaseResponse
 from app.database.models.db_models import FileStatus
 from app.api.v1.middlewares.validation_middleware import (
     validate_pagination_parameters,
@@ -533,13 +533,73 @@ async def search_documents(
                     chunk_index=result.chunk_index,
                     content=result.content,
                     meta_info=result.meta_info,
-                    created_at=result.created_at
+                    created_at=result.created_at,
+                    is_knowledge_base=result.is_knowledge_base
                 ) for result in results
             ]
         )
 
     except Exception as e:
         logger.error(f"Error searching documents: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while searching documents"
+        )
+        
+@router.get("/search", response_model=BaseResponse[PaginatedKnowledgeBaseResponse])
+async def search_user_documents(
+    query: str = Query(..., min_length=3),
+    page: int = Query(default=1, gt=0),
+    per_page: int = Query(default=20, gt=0, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Search across all documents the user has access to across all organizations
+    """
+    try:
+        logger.info(f"Searching all user accessible documents with query '{query}', page {page}, per_page {per_page}")
+        start_time = datetime.now()
+        
+        document_service = DocumentService()
+        
+        results, total_count = await document_service.search_documents_for_user(
+            user_id=current_user.id,
+            query=query,
+            page=page,
+            per_page=per_page
+        )
+        
+        # Calculate pagination info
+        total_pages = math.ceil(total_count / per_page) if total_count > 0 else 0
+        
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"User search completed (Duration: {duration}s), {len(results)} results found, {total_count} total.")
+        
+        # Check if we need to add any additional tags (like organization name) in the future
+        knowledge_base_responses = [
+            KnowledgeBaseResponse(
+                fp=result.fp,
+                chunk_index=result.chunk_index,
+                content=result.content,
+                meta_info=result.meta_info,
+                created_at=result.created_at,
+                is_knowledge_base=result.is_knowledge_base
+            ) for result in results
+        ]
+        
+        return BaseResponse(
+            success=True,
+            data=PaginatedKnowledgeBaseResponse(
+                chunks=knowledge_base_responses,
+                total_count=total_count,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page
+            )
+        )
+    
+    except Exception as e:
+        logger.error(f"Error searching user documents: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while searching documents"

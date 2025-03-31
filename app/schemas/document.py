@@ -32,3 +32,10 @@ class PaginatedDocumentResponse(BaseModel):
     current_page: int
     per_page: int
     organization_fp: Optional[str] = None
+    
+class PaginatedKnowledgeBaseResponse(BaseModel):
+    chunks: List[KnowledgeBaseResponse]
+    total_count: int
+    total_pages: int
+    current_page: int
+    per_page: int

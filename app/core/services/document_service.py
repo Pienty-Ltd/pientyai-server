@@ -12,7 +12,7 @@ from app.database.models.db_models import File, KnowledgeBase, FileStatus, User,
 from app.core.services.openai_service import OpenAIService
 from sqlalchemy import select, desc, delete, func
 from sqlalchemy.orm import joinedload
-from sqlalchemy import delete, select, func
+from sqlalchemy import delete, select, func, text
 import math
 from datetime import datetime
 
@@ -386,18 +386,21 @@ class DocumentService:
                         logger.debug(f"Chunk {chunk.id} similarity score: {similarity}")
 
                 return chunks
+        except Exception as e:
+            logger.error(f"Error searching documents: {str(e)}", exc_info=True)
+            raise
                 
     async def search_documents_for_user(
         self,
         user_id: int,
         query: str,
         page: int = 1,
-        per_page: int = 20,
-        limit: int = 100
+        per_page: int = 20
     ) -> Tuple[List[KnowledgeBase], int]:
         """
         Search through all documents the user has access to across all organizations
         Returns a tuple of (chunks, total_count)
+        This uses a single optimized SQL query with window functions for pagination
         """
         try:
             logger.info(f"Starting semantic search across all orgs for user {user_id}. Query: '{query}'")
@@ -412,51 +415,72 @@ class DocumentService:
             embedding_duration = (datetime.now() - start_time).total_seconds()
             logger.debug(f"Generated query embedding (Duration: {embedding_duration}s)")
 
+            # Calculate pagination
+            offset = (page - 1) * per_page
+            
             async with async_session_maker() as session:
-                # Build a query that joins with user_organizations to find documents
-                # across all organizations the user has access to
+                # Use raw SQL with window functions for better performance
+                # This performs pagination and counting in a single query
+                search_start = datetime.now()
                 
-                # First get the total count
-                count_stmt = select(func.count()).select_from(KnowledgeBase).join(
-                    Organization, KnowledgeBase.organization_id == Organization.id
-                ).join(
-                    "user_organizations",
-                    Organization.id == Organization.user_organizations.c.organization_id
-                ).where(
-                    Organization.user_organizations.c.user_id == user_id,
-                    KnowledgeBase.is_knowledge_base == True
+                query_sql = text("""
+                    WITH ranked_results AS (
+                        SELECT 
+                            kb.*,
+                            COUNT(*) OVER() as total_count,
+                            ROW_NUMBER() OVER(ORDER BY l2_distance(kb.embedding, :query_embedding::vector)) as row_num
+                        FROM 
+                            knowledge_base kb
+                        JOIN
+                            organizations org ON kb.organization_id = org.id
+                        JOIN
+                            user_organizations uo ON org.id = uo.organization_id
+                        WHERE
+                            uo.user_id = :user_id
+                            AND kb.is_knowledge_base = TRUE
+                    )
+                    SELECT * FROM ranked_results
+                    WHERE row_num > :offset AND row_num <= :offset_end
+                    ORDER BY row_num
+                """)
+                
+                result = await session.execute(
+                    query_sql, 
+                    {
+                        "query_embedding": query_embedding[0],
+                        "user_id": user_id,
+                        "offset": offset,
+                        "offset_end": offset + per_page
+                    }
                 )
                 
-                count_result = await session.execute(count_stmt)
-                total_count = count_result.scalar() or 0
+                rows = result.fetchall()
                 
-                # Calculate pagination
-                offset = (page - 1) * per_page
+                # Extract total count from first row if results exist
+                total_count = rows[0].total_count if rows else 0
                 
-                # Then get the actual results with pagination
-                search_start = datetime.now()
-                stmt = select(KnowledgeBase).join(
-                    Organization, KnowledgeBase.organization_id == Organization.id
-                ).join(
-                    "user_organizations",
-                    Organization.id == Organization.user_organizations.c.organization_id
-                ).where(
-                    Organization.user_organizations.c.user_id == user_id,
-                    KnowledgeBase.is_knowledge_base == True
-                ).order_by(
-                    func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
-                ).limit(per_page).offset(offset)
-
-                result = await session.execute(stmt)
-                chunks = result.scalars().all()
+                # Convert rows to KnowledgeBase objects
+                chunks = [
+                    KnowledgeBase(
+                        id=row.id,
+                        fp=row.fp,
+                        file_id=row.file_id,
+                        organization_id=row.organization_id,
+                        chunk_index=row.chunk_index,
+                        content=row.content,
+                        embedding=row.embedding,
+                        meta_info=row.meta_info,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at
+                    ) for row in rows
+                ]
 
                 search_duration = (datetime.now() - search_start).total_seconds()
                 logger.info(f"Found {len(chunks)} relevant chunks for user {user_id} (Total: {total_count}, Search duration: {search_duration}s)")
 
                 return chunks, total_count
-
         except Exception as e:
-            logger.error(f"Error searching documents: {str(e)}", exc_info=True)
+            logger.error(f"Error searching documents for user: {str(e)}", exc_info=True)
             raise
 
     async def get_user_accessible_documents(
