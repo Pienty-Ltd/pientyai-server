@@ -12,7 +12,12 @@ class AnalysisStatusEnum(str, Enum):
 class DocumentAnalysisRequest(BaseModel):
     organization_fp: str = Field(..., description="Organization fingerprint (fp) the document belongs to")
     document_fp: str = Field(..., description="Document fingerprint (fp) to analyze")
-    max_relevant_chunks: int = Field(5, description="Maximum number of relevant chunks to use for context")
+    max_relevant_chunks: int = Field(
+        5, 
+        description="Maximum number of relevant chunks to use for context", 
+        ge=3,  # minimum 3
+        le=10  # maximum 10
+    )
 
 class ChunkAnalysis(BaseModel):
     chunk_index: int

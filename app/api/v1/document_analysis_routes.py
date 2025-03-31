@@ -48,6 +48,13 @@ async def analyze_document(
         await validate_organization_fp(analysis_request.organization_fp)
         await validate_document_fp(analysis_request.document_fp)
         
+        # Validate max_relevant_chunks is within allowed range (3-10)
+        if analysis_request.max_relevant_chunks < 3 or analysis_request.max_relevant_chunks > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_relevant_chunks must be between 3 and 10"
+            )
+        
         # Initialize services
         from app.database.repositories.organization_repository import OrganizationRepository
         async with async_session_maker() as session:

@@ -221,15 +221,23 @@ class DocumentAnalysisService:
         Find the most relevant knowledge base chunks for a query text
         Only searches through actual knowledge base chunks (is_knowledge_base=True)
         
+        Also includes adjacent chunks (2 before and 2 after) for each relevant chunk to provide more context.
+        This helps avoid truncated information from chunk boundaries.
+        
         Args:
             organization_id: ID of the organization
             query_text: Text to search for (usually a chunk from the document to analyze)
             current_document_id: Optional ID of the current document to exclude from results
-            limit: Maximum number of chunks to return
+            limit: Maximum number of chunks to return (between 3 and 10)
             
         Returns:
-            List of relevant knowledge base chunks
+            List of relevant knowledge base chunks including adjacent chunks for better context
         """
+        # Ensure limit is within allowed range
+        if limit < 3:
+            limit = 3
+        elif limit > 10:
+            limit = 10
         try:
             # Generate embedding for the query text
             query_embedding = await self.openai_service.create_embeddings([query_text])
@@ -238,28 +246,106 @@ class DocumentAnalysisService:
                 return []
                 
             async with async_session_maker() as session:
-                # Base query: chunks from this organization that are part of the knowledge base,
-                # ordered by vector similarity
-                query = select(KnowledgeBase).where(
+                # Step 1: First get the most relevant chunks based on vector similarity
+                base_query = select(KnowledgeBase).where(
                     KnowledgeBase.organization_id == organization_id,
                     KnowledgeBase.is_knowledge_base == True  # Only include knowledge base chunks
                 )
                 
                 # If a current document ID is provided, exclude it from the results
                 if current_document_id is not None:
-                    query = query.where(
+                    base_query = base_query.where(
                         KnowledgeBase.file_id != current_document_id
                     )
                 
-                # Order by vector similarity (L2 distance) and limit results
-                query = query.order_by(
+                # Order by vector similarity (L2 distance) and get top matches
+                # We'll get fewer initial chunks since we'll be adding adjacent ones later
+                initial_limit = min(limit // 2, 3)  # Get fewer initial chunks to leave room for adjacent ones
+                if initial_limit < 1:
+                    initial_limit = 1
+                
+                similarity_query = base_query.order_by(
                     func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
-                ).limit(limit)
+                ).limit(initial_limit)
                 
-                result = await session.execute(query)
-                chunks = result.scalars().all()
+                result = await session.execute(similarity_query)
+                top_chunks = result.scalars().all()
                 
-                return chunks
+                if not top_chunks:
+                    return []
+                
+                # Step 2: Collect file_ids and chunk_indexes from top results
+                # We'll use a dictionary to group by file_id for efficient lookup
+                final_chunks = []
+                seen_chunk_keys = set()  # To track chunks we've already included
+                chunks_to_fetch = []
+                
+                # Group top chunks by file_id and track their chunk_indexes
+                file_chunks = {}
+                for chunk in top_chunks:
+                    if chunk.file_id not in file_chunks:
+                        file_chunks[chunk.file_id] = []
+                    file_chunks[chunk.file_id].append(chunk.chunk_index)
+                    # Add the original chunks to our final list
+                    final_chunks.append(chunk)
+                    seen_chunk_keys.add(f"{chunk.file_id}_{chunk.chunk_index}")
+                
+                # Step 3: For each file, get adjacent chunks (2 before and 2 after each chunk)
+                for file_id, chunk_indexes in file_chunks.items():
+                    # For each chunk index, calculate the adjacent indexes we want
+                    for chunk_index in chunk_indexes:
+                        # Get up to 2 chunks before and 2 chunks after
+                        for adj_index in range(chunk_index - 2, chunk_index + 3):
+                            # Skip the original chunk (we already added it)
+                            if adj_index == chunk_index:
+                                continue
+                            
+                            # Skip if we've already seen this chunk
+                            chunk_key = f"{file_id}_{adj_index}"
+                            if chunk_key in seen_chunk_keys:
+                                continue
+                            
+                            # Only fetch valid indexes (non-negative)
+                            if adj_index >= 0:
+                                chunks_to_fetch.append((file_id, adj_index))
+                                seen_chunk_keys.add(chunk_key)
+                
+                # Step 4: Fetch all adjacent chunks in a single efficient query if there are any to fetch
+                if chunks_to_fetch:
+                    # Build conditions for OR query to get all adjacent chunks at once
+                    conditions = []
+                    for file_id, adj_index in chunks_to_fetch:
+                        conditions.append(
+                            and_(
+                                KnowledgeBase.file_id == file_id,
+                                KnowledgeBase.chunk_index == adj_index
+                            )
+                        )
+                    
+                    # Only execute the query if we have conditions
+                    if conditions:
+                        adjacent_query = select(KnowledgeBase).where(
+                            or_(*conditions),
+                            KnowledgeBase.organization_id == organization_id,
+                            KnowledgeBase.is_knowledge_base == True
+                        )
+                        
+                        result = await session.execute(adjacent_query)
+                        adjacent_chunks = result.scalars().all()
+                        
+                        # Add all adjacent chunks to our final list
+                        final_chunks.extend(adjacent_chunks)
+                
+                # Step 5: Sort the final chunks for better readability
+                # Sort first by file_id, then by chunk_index to maintain proper document order
+                final_chunks.sort(key=lambda x: (x.file_id, x.chunk_index))
+                
+                # Ensure we don't exceed the original limit
+                if len(final_chunks) > limit * 2:  # Allow slightly more for context
+                    logger.info(f"Trimming chunk count from {len(final_chunks)} to {limit * 2}")
+                    final_chunks = final_chunks[:limit * 2]
+                
+                return final_chunks
                 
         except Exception as e:
             logger.error(f"Error finding relevant knowledge base chunks: {str(e)}")
