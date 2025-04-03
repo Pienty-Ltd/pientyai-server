@@ -5,7 +5,7 @@ import logging
 import asyncio
 import math
 from datetime import datetime
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, and_, or_
 
 from app.core.services.openai_service import OpenAIService
 from app.core.services.document_service import DocumentService
