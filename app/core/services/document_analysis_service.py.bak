@@ -724,7 +724,7 @@ class DocumentAnalysisService:
                     return
                 
                 # Update the analysis record with the results
-                analysis.analysis = analysis_data.get("analysis") or ""  # Ensure analysis is never None
+                analysis.analysis = analysis_data.get("analysis")
                 analysis.key_points = analysis_data.get("key_points", [])
                 analysis.conflicts = analysis_data.get("conflicts", [])
                 analysis.recommendations = analysis_data.get("recommendations", [])
@@ -765,7 +765,7 @@ class DocumentAnalysisService:
                     return
                 
                 # Update the analysis record with the results
-                analysis.analysis = analysis_data.get("analysis") or ""  # Ensure analysis is never None
+                analysis.analysis = analysis_data.get("analysis")
                 analysis.key_points = analysis_data.get("key_points", [])
                 analysis.conflicts = analysis_data.get("conflicts", [])
                 analysis.recommendations = analysis_data.get("recommendations", [])

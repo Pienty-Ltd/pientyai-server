@@ -28,7 +28,7 @@ class DocumentAnalysisResponse(BaseModel):
     fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
     document_fp: str = Field(..., description="Document fingerprint (fp)")
     organization_fp: str = Field(..., description="Organization fingerprint (fp)")
-    analysis: str = Field(..., description="Overall analysis of the document")
+    analysis: str = Field("", description="Overall analysis of the document")
     key_points: List[str] = Field([], description="Key points identified in the document")
     conflicts: List[str] = Field([], description="Potential conflicts with existing documents")
     recommendations: List[str] = Field([], description="Recommended actions based on the analysis")
