@@ -3,9 +3,16 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from app.database.models.db_models import FileStatus
 
+
 class DocumentUploadRequest(BaseModel):
-    organization_fp: str = Field(..., description="Organization fingerprint to upload the document to")
-    is_knowledge_base: bool = Field(True, description="Whether the document is for knowledge base (True) or for analysis (False)")
+    organization_fp: str = Field(
+        ..., description="Organization fingerprint to upload the document to")
+    is_knowledge_base: bool = Field(
+        True,
+        description=
+        "Whether the document is for knowledge base (True) or for analysis (False)"
+    )
+
 
 class DocumentResponse(BaseModel):
     fp: str
@@ -18,6 +25,7 @@ class DocumentResponse(BaseModel):
     is_knowledge_base: Optional[bool] = True
     organization_fp: Optional[str] = None
 
+
 class KnowledgeBaseResponse(BaseModel):
     fp: str
     chunk_index: int
@@ -26,10 +34,12 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: datetime
     is_knowledge_base: bool = True
 
+
 class DocumentWithChunksResponse(DocumentResponse):
     """Extended DocumentResponse that includes the document chunks"""
     chunks: List[KnowledgeBaseResponse] = []
-    
+
+
 class PaginatedDocumentResponse(BaseModel):
     documents: List[DocumentResponse]
     total_count: int
@@ -37,7 +47,8 @@ class PaginatedDocumentResponse(BaseModel):
     current_page: int
     per_page: int
     organization_fp: Optional[str] = None
-    
+
+
 class PaginatedKnowledgeBaseResponse(BaseModel):
     chunks: List[KnowledgeBaseResponse]
     total_count: int
