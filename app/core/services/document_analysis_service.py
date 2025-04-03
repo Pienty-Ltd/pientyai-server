@@ -57,12 +57,14 @@ class DocumentAnalysisService:
             # Fetch the document to be analyzed
             document = await self.document_service.get_document_by_id(organization_id, document_id)
             if not document:
-                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED)
-                raise ValueError(f"Document not found: {document_id}")
+                error_msg = f"Document not found: {document_id}"
+                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
+                raise ValueError(error_msg)
                 
             if document.status != "completed":
-                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED)
-                raise ValueError(f"Document processing is not complete. Current status: {document.status}")
+                error_msg = f"Document processing is not complete. Current status: {document.status}"
+                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
+                raise ValueError(error_msg)
             
             # Update the status to processing
             await self.update_analysis_status(analysis_record.id, AnalysisStatus.PROCESSING)
@@ -71,8 +73,9 @@ class DocumentAnalysisService:
             document_chunks = await self.get_document_chunks(document_id)
             
             if not document_chunks:
-                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED)
-                raise ValueError(f"No chunks found for document {document_id}")
+                error_msg = f"No chunks found for document {document_id}"
+                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
+                raise ValueError(error_msg)
                 
             # Store the original content (concatenated chunks)
             original_content = "\n\n".join([chunk.content for chunk in document_chunks])
@@ -108,6 +111,15 @@ class DocumentAnalysisService:
                     document_chunk=chunk_content,
                     knowledge_base_chunks=kb_content_list
                 )
+                
+                # Check if the analysis contains an error
+                if "error" in chunk_analysis:
+                    error_msg = f"Chunk {chunk_index + 1} analysis failed: {chunk_analysis.get('error', 'Unknown error')}"
+                    logger.error(error_msg)
+                    # If this is the first chunk and it failed, we might want to fail the whole analysis
+                    if chunk_index == 0:
+                        await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
+                        raise ValueError(error_msg)
                 
                 # Add metadata about the chunk to the analysis result
                 chunk_analysis["chunk_index"] = chunk_index
@@ -187,10 +199,11 @@ class DocumentAnalysisService:
             }
             
         except Exception as e:
-            logger.error(f"Error in document analysis: {str(e)}", exc_info=True)
-            # If there's a record, update it to failed status
+            error_msg = f"Error in document analysis: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            # If there's a record, update it to failed status with the error message
             if 'analysis_record' in locals() and analysis_record:
-                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED)
+                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
             raise
             
     async def get_document_chunks(self, document_id: int) -> List[KnowledgeBase]:
@@ -592,7 +605,8 @@ class DocumentAnalysisService:
     async def update_analysis_status(
         self,
         analysis_id: int,
-        status: AnalysisStatus
+        status: AnalysisStatus,
+        error_message: Optional[str] = None
     ) -> None:
         """Update the status of an analysis record by ID"""
         try:
@@ -609,6 +623,10 @@ class DocumentAnalysisService:
                 
                 analysis.status = status
                 
+                # If status is FAILED and error_message is provided, save it
+                if status == AnalysisStatus.FAILED and error_message:
+                    analysis.error_message = error_message
+                
                 # If completed, set the completed_at timestamp
                 if status == AnalysisStatus.COMPLETED:
                     analysis.completed_at = datetime.now()
@@ -623,7 +641,8 @@ class DocumentAnalysisService:
     async def update_analysis_status_by_fp(
         self,
         analysis_fp: str,
-        status: AnalysisStatus
+        status: AnalysisStatus,
+        error_message: Optional[str] = None
     ) -> None:
         """Update the status of an analysis record by fingerprint"""
         try:
@@ -639,6 +658,10 @@ class DocumentAnalysisService:
                     return
                 
                 analysis.status = status
+                
+                # If status is FAILED and error_message is provided, save it
+                if status == AnalysisStatus.FAILED and error_message:
+                    analysis.error_message = error_message
                 
                 # If completed, set the completed_at timestamp
                 if status == AnalysisStatus.COMPLETED:

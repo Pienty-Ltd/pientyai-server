@@ -207,5 +207,15 @@ class OpenAIService:
                                         )  # Exponential backoff
 
         except Exception as e:
-            logger.error(f"Error in document analysis: {str(e)}")
-            raise
+            error_msg = f"Error in document analysis: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            
+            # Return a structured error response that can be used by the calling function
+            return {
+                "analysis": f"Analysis failed: {error_msg}",
+                "key_points": [],
+                "conflicts": [],
+                "recommendations": ["Contact support if this issue persists."],
+                "error": error_msg,
+                "error_type": type(e).__name__
+            }

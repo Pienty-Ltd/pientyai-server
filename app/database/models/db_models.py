@@ -206,6 +206,7 @@ class DocumentAnalysis(Base):
     
     # Gerçekleştirme Bilgileri
     status = Column(Enum(AnalysisStatus), nullable=False, default=AnalysisStatus.PENDING)
+    error_message = Column(Text, nullable=True)  # Hata mesajını kaydetmek için
     total_chunks_analyzed = Column(Integer, default=0)
     processing_time_seconds = Column(Numeric(10, 2), nullable=True)
     chunk_analyses = Column(JSON, nullable=True)  # Her chunk için detaylı analiz sonuçları
