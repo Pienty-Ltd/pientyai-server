@@ -219,16 +219,13 @@ async def list_user_documents(
                                      status=doc.status,
                                      created_at=doc.created_at,
                                      chunks_count=doc.chunk_count if hasattr(
-                                         doc, 'chunk_count') else 0,
-                                     organization_id=doc.organization_id)
+                                         doc, 'chunk_count') else 0)
                     for doc in documents
                 ],
                 total_count=total_count,
                 total_pages=total_pages,
                 current_page=page,
-                per_page=per_page,
-                organization_fp=
-                organization_fp  # Pass the organization_fp if it was provided
+                per_page=per_page
             ))
     except ValueError as ve:
         logger.error(f"Validation error in list_user_documents: {str(ve)}")
@@ -304,15 +301,13 @@ async def list_organization_documents(
                         status=doc.status,
                         created_at=doc.created_at,
                         chunks_count=
-                        0,  # Set to 0 since we don't load knowledge_base
-                        organization_id=doc.organization_id)
+                        0)  # Set to 0 since we don't load knowledge_base
                     for doc in documents
                 ],
                 total_count=total_count,
                 total_pages=total_pages,
                 current_page=page,
-                per_page=per_page,
-                organization_fp=org_fp))
+                per_page=per_page))
 
     except HTTPException as e:
         raise e
@@ -531,9 +526,7 @@ async def get_document(
             status=document.status,
             created_at=document.created_at,
             chunks_count=document.chunk_count,
-            organization_id=document.organization_id,
             is_knowledge_base=document.is_knowledge_base,
-            organization_fp=org_fp,
             chunks=[]  # Default empty list of chunks
         )
 
@@ -705,7 +698,6 @@ async def upload_document(
                 status=db_file.status,
                 created_at=db_file.created_at,
                 chunks_count=0,  # Will be updated during processing
-                organization_id=organization.id,
                 is_knowledge_base=is_knowledge_base))
 
     except HTTPException as e:
@@ -780,9 +772,7 @@ async def search_documents(org_fp: str,
                              created_at=doc.created_at,
                              chunks_count=doc.chunk_count if hasattr(
                                  doc, 'chunk_count') else 0,
-                             organization_id=doc.organization_id,
-                             is_knowledge_base=doc.is_knowledge_base,
-                             organization_fp=org_fp) for doc in documents
+                             is_knowledge_base=doc.is_knowledge_base) for doc in documents
         ]
 
         return BaseResponse(success=True,
@@ -791,8 +781,7 @@ async def search_documents(org_fp: str,
                                 total_count=total_count,
                                 total_pages=total_pages,
                                 current_page=page,
-                                per_page=per_page,
-                                organization_fp=org_fp))
+                                per_page=per_page))
 
     except Exception as e:
         logger.error(f"Error searching documents: {str(e)}", exc_info=True)
@@ -839,7 +828,6 @@ async def search_user_documents(
                              status=file.status,
                              created_at=file.created_at,
                              chunks_count=file.chunk_count,
-                             organization_id=file.organization_id,
                              is_knowledge_base=file.is_knowledge_base)
             for file in results
         ]

@@ -21,9 +21,7 @@ class DocumentResponse(BaseModel):
     status: FileStatus
     created_at: datetime
     chunks_count: int
-    organization_id: int
     is_knowledge_base: Optional[bool] = True
-    organization_fp: Optional[str] = None
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -46,7 +44,6 @@ class PaginatedDocumentResponse(BaseModel):
     total_pages: int
     current_page: int
     per_page: int
-    organization_fp: Optional[str] = None
 
 
 class PaginatedKnowledgeBaseResponse(BaseModel):
