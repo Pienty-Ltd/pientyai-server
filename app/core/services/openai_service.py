@@ -64,15 +64,25 @@ class OpenAIService:
                         break  # Success, exit retry loop
 
                     except Exception as e:
+                        error_details = str(e)
+                        # Özellikle OpenAI API hataları için ayrıntılı hata bilgilerini yakala
+                        if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                            try:
+                                error_json = e.response.json()
+                                error_details = f"Error code: {e.response.status_code} - {error_json}"
+                                logger.error(f"OpenAI API error details: {error_json}")
+                            except:
+                                pass
+                                
                         retry_count += 1
                         if retry_count == self.MAX_RETRIES:
                             logger.error(
-                                f"Failed to generate embeddings after {self.MAX_RETRIES} retries: {str(e)}"
+                                f"Failed to generate embeddings after {self.MAX_RETRIES} retries: {error_details}"
                             )
-                            raise
+                            raise Exception(f"Error creating embeddings: {error_details}")
 
                         logger.warning(
-                            f"Retry {retry_count}/{self.MAX_RETRIES} for batch {i//self.BATCH_SIZE + 1}: {str(e)}"
+                            f"Retry {retry_count}/{self.MAX_RETRIES} for batch {i//self.BATCH_SIZE + 1}: {error_details}"
                         )
                         await asyncio.sleep(self.RETRY_DELAY * retry_count
                                             )  # Exponential backoff
@@ -165,8 +175,6 @@ class OpenAIService:
                             "role": "user",
                             "content": user_message
                         }],
-                        temperature=
-                        0.1,  # Low temperature for more factual responses
                         response_format={"type":
                                          "json_object"}  # Ensure JSON response
                     )
@@ -190,15 +198,27 @@ class OpenAIService:
                         }
 
                 except Exception as e:
+                    error_details = str(e)
+                    # Özellikle OpenAI API hataları için ayrıntılı hata bilgilerini yakala
+                    if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                        try:
+                            error_json = e.response.json()
+                            error_details = f"Error code: {e.response.status_code} - {error_json}"
+                            logger.error(f"OpenAI API error details: {error_json}")
+                        except:
+                            pass
+                        
                     retry_count += 1
                     if retry_count == self.MAX_RETRIES:
                         logger.error(
-                            f"Failed to get analysis after {self.MAX_RETRIES} retries: {str(e)}"
+                            f"Failed to get analysis after {self.MAX_RETRIES} retries: {error_details}"
                         )
-                        raise
+                        # Özel bir hata objesi yarat ve yükselt
+                        error = Exception(f"Error in document analysis: {error_details}")
+                        raise error
 
                     logger.warning(
-                        f"Retry {retry_count}/{self.MAX_RETRIES} for document analysis: {str(e)}"
+                        f"Retry {retry_count}/{self.MAX_RETRIES} for document analysis: {error_details}"
                     )
                     await asyncio.sleep(self.RETRY_DELAY * retry_count
                                         )  # Exponential backoff
