@@ -90,7 +90,7 @@ class OpenAIService:
     async def analyze_document(self,
                                document_chunk: str,
                                knowledge_base_chunks: List[str],
-                               max_tokens: int = 4000) -> Dict[str, Any]:
+                               max_completion_tokens: int = 4000) -> Dict[str, Any]:
         """
         Analyze a document chunk against relevant knowledge base chunks using OpenAI API
         
@@ -169,7 +169,7 @@ class OpenAIService:
                         }],
                         temperature=
                         0.1,  # Low temperature for more factual responses
-                        max_tokens=max_tokens,
+                        max_completion_tokens=max_tokens,  # Using max_completion_tokens for o3 models
                         response_format={"type":
                                          "json_object"}  # Ensure JSON response
                     )
