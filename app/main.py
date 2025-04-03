@@ -1,5 +1,7 @@
 import logging
 import os
+import asyncio
+import uuid
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +22,7 @@ from app.core.config import config
 from app.database.database_factory import create_tables, get_db
 from app.schemas.base import BaseResponse, ErrorResponse
 from app.api.v1.middlewares.request_logging_middleware import log_request_middleware
+from app.core.services.error_logger_service import ErrorLoggerService
 
 project_name = "Pienty.AI"
 
@@ -65,6 +68,39 @@ app.include_router(v1_router)
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):
     logger.warning(f"Validation error: {str(exc)}")
+    
+    # Log validation errors to help identify common input problems
+    # We collect the error details to make them searchable in the database
+    error_details = [f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in exc.errors()]
+    error_message = "; ".join(error_details)
+    
+    # Create a structured context with all validation errors
+    context_data = {
+        "validation_errors": [
+            {
+                "location": err["loc"],
+                "message": err["msg"],
+                "type": err.get("type", "unknown")
+            } for err in exc.errors()
+        ],
+        "path": str(request.url),
+        "method": request.method
+    }
+    
+    # Log the validation error
+    asyncio.create_task(
+        ErrorLoggerService.log_error(
+            error=exc,
+            error_type="VALIDATION_ERROR",
+            request_id=getattr(request.state, 'request_id', None),
+            user_fp=getattr(request.state, 'user', {}).get('fp', None) if hasattr(request.state, 'user') else None,
+            ip_address=request.client.host if request.client else None,
+            path=str(request.url),
+            method=request.method,
+            context_data=context_data
+        )
+    )
+    
     return JSONResponse(status_code=422,
                         content=BaseResponse(
                             success=False,
@@ -80,9 +116,45 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 # Handle unauthorized access and authentication errors
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    logger.warning(f"HTTP exception: {exc.detail}")
     status_code = exc.status_code
     headers = getattr(exc, 'headers', None)
+
+    # Log level depends on status code
+    if status_code >= 500:
+        logger.error(f"Server error: {exc.detail}")
+        
+        # Log server errors (5xx) to the database
+        # These are important to track as they indicate server-side issues
+        asyncio.create_task(
+            ErrorLoggerService.log_error(
+                error=exc,
+                error_type=f"HTTP_{status_code}",
+                request_id=getattr(request.state, 'request_id', None),
+                user_fp=getattr(request.state, 'user', {}).get('fp', None) if hasattr(request.state, 'user') else None,
+                ip_address=request.client.host if request.client else None,
+                path=str(request.url),
+                method=request.method
+            )
+        )
+    elif status_code >= 400:
+        logger.warning(f"Client error: {exc.detail}")
+        
+        # Only log certain 4xx errors that might indicate problems with the application
+        # like 405 Method Not Allowed or 415 Unsupported Media Type
+        if status_code in [405, 415, 422, 429]:
+            asyncio.create_task(
+                ErrorLoggerService.log_error(
+                    error=exc,
+                    error_type=f"HTTP_{status_code}",
+                    request_id=getattr(request.state, 'request_id', None),
+                    user_fp=getattr(request.state, 'user', {}).get('fp', None) if hasattr(request.state, 'user') else None,
+                    ip_address=request.client.host if request.client else None,
+                    path=str(request.url),
+                    method=request.method
+                )
+            )
+    else:
+        logger.info(f"HTTP exception: {exc.detail}")
 
     # If detail is a dict, preserve its structure; otherwise create a standard format
     if isinstance(exc.detail, dict):
@@ -122,13 +194,45 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    
+    # Generate a unique error ID for tracking
+    error_id = f"err_{uuid.uuid4().hex[:10]}"
+    
+    # Get request information
+    request_id = getattr(request.state, 'request_id', None)
+    user_fp = None
+    
+    # Try to get user from request state
+    if hasattr(request.state, 'user'):
+        user = getattr(request.state, 'user', None)
+        if user and hasattr(user, 'fp'):
+            user_fp = user.fp
+    
+    # Log the error to the database asynchronously
+    # We use create_task to avoid waiting for the DB operation
+    asyncio.create_task(
+        ErrorLoggerService.log_error(
+            error=exc,
+            request_id=request_id,
+            user_fp=user_fp,
+            ip_address=request.client.host if request.client else None,
+            path=str(request.url),
+            method=request.method,
+            context_data={
+                "headers": dict(request.headers),
+                "query_params": dict(request.query_params)
+            }
+        )
+    )
+    
     return JSONResponse(
         status_code=500,
         content=BaseResponse(
             success=False,
             message="Internal Server Error",
             error=ErrorResponse(
-                message="An unexpected error occurred")).dict())
+                message=f"An unexpected error occurred (Error ID: {error_id})")
+        ).dict())
 
 
 # Root endpoint
