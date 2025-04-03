@@ -357,7 +357,7 @@ async def get_analysis_detail(
                 fp=analysis.fp,
                 document_fp=document.fp if document else "",
                 organization_fp=organization_fp,
-                analysis=analysis.analysis,
+                analysis=analysis.analysis or "",  # Ensure analysis is never None
                 key_points=analysis.key_points or [],
                 conflicts=analysis.conflicts or [],
                 recommendations=analysis.recommendations or [],
