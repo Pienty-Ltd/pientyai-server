@@ -165,6 +165,8 @@ class OpenAIService:
             while retry_count < self.MAX_RETRIES:
                 try:
                     # Run the synchronous API call in a thread pool to avoid blocking
+                    # O3-mini model has specific requirements - it doesn't support max_tokens or temperature
+                    # Only pass the parameters it accepts to avoid API errors
                     response = await asyncio.to_thread(
                         self.client.chat.completions.create,
                         model="o3-mini",  # Using the specified o3-mini model
@@ -175,8 +177,7 @@ class OpenAIService:
                             "role": "user",
                             "content": user_message
                         }],
-                        response_format={"type":
-                                         "json_object"}  # Ensure JSON response
+                        response_format={"type": "json_object"}  # Ensure JSON response
                     )
 
                     logger.debug(f"OpenAI API response received: {response}")

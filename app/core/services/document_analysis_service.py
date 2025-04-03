@@ -253,9 +253,18 @@ class DocumentAnalysisService:
             limit = 10
         try:
             # Generate embedding for the query text
-            query_embedding = await self.openai_service.create_embeddings([query_text])
-            if not query_embedding or len(query_embedding) == 0:
-                logger.error("Failed to generate embedding for query text")
+            try:
+                query_embedding = await self.openai_service.create_embeddings([query_text])
+                if not query_embedding or len(query_embedding) == 0:
+                    logger.error("Failed to generate embedding for query text")
+                    return []
+            except Exception as e:
+                error_details = str(e)
+                if hasattr(e, '__cause__') and e.__cause__ is not None:
+                    error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+                
+                logger.error(f"Error generating embedding for query text: {error_details}")
+                # Return empty list so document analysis can continue without vector search
                 return []
                 
             async with async_session_maker() as session:
@@ -277,9 +286,25 @@ class DocumentAnalysisService:
                 if initial_limit < 1:
                     initial_limit = 1
                 
-                similarity_query = base_query.order_by(
-                    func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
-                ).limit(initial_limit)
+                try:
+                    # Vektör sorgusu yaparken hata yakalama ekleyelim
+                    if query_embedding and len(query_embedding) > 0 and len(query_embedding[0]) > 0:
+                        similarity_query = base_query.order_by(
+                            func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
+                        ).limit(initial_limit)
+                    else:
+                        # Eğer embedding oluşturulamadıysa veya geçersizse,
+                        # Basit bir sorgu ile en son eklenen knowledge base parçalarını getirelim
+                        logger.warning("Invalid embedding for query, falling back to recent chunks")
+                        similarity_query = base_query.order_by(
+                            KnowledgeBase.created_at.desc()
+                        ).limit(initial_limit)
+                except Exception as e:
+                    # L2 distance fonksiyonu çalışmazsa en son parçaları getirelim
+                    logger.error(f"Vector search failed: {str(e)}, falling back to recent chunks")
+                    similarity_query = base_query.order_by(
+                        KnowledgeBase.created_at.desc()
+                    ).limit(initial_limit)
                 
                 result = await session.execute(similarity_query)
                 top_chunks = result.scalars().all()
@@ -361,7 +386,25 @@ class DocumentAnalysisService:
                 return final_chunks
                 
         except Exception as e:
-            logger.error(f"Error finding relevant knowledge base chunks: {str(e)}")
+            error_msg = f"Error finding relevant knowledge base chunks: {str(e)}"
+            error_details = str(e)
+            
+            # Try to extract more detailed error information for PostgreSQL/pgvector errors
+            if hasattr(e, '__cause__') and e.__cause__ is not None:
+                error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+                if hasattr(e.__cause__, '__cause__') and e.__cause__.__cause__ is not None:
+                    error_details = f"{error_details} | Root cause: {str(e.__cause__.__cause__)}"
+            
+            # PostgreSQL error codes
+            if 'asyncpg.exceptions.DataError' in error_details:
+                logger.error(f"PostgreSQL vector operation failed: {error_details}")
+            elif 'asyncpg.exceptions' in error_details:
+                logger.error(f"PostgreSQL error: {error_details}")
+                
+            logger.error(error_msg)
+            logger.error(f"Detailed error info: {error_details}")
+            
+            # Return empty list regardless of error to avoid blocking the document analysis process
             return []
             
     # CRUD Operations for DocumentAnalysis
