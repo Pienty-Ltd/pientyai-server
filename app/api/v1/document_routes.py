@@ -169,6 +169,9 @@ async def list_user_documents(
     organization_fp: Optional[str] = Query(
         None,
         description="Optional organization fingerprint to filter documents"),
+    is_knowledge_base: Optional[bool] = Query(
+        None,
+        description="Filter by document type: true for knowledge base documents, false for analysis documents, null for both"),
     current_user: User = Depends(get_current_user)):
     """
     List documents accessible to the current user
@@ -201,7 +204,8 @@ async def list_user_documents(
             user_id=current_user.id,
             page=page,
             per_page=per_page,
-            organization_fp=organization_fp)
+            organization_fp=organization_fp,
+            is_knowledge_base=is_knowledge_base)
 
         total_pages = math.ceil(total_count / per_page)
         duration = (datetime.now() - start_time).total_seconds()
@@ -248,6 +252,9 @@ async def list_organization_documents(
                           gt=0,
                           le=100,
                           description="Items per page, max 100"),
+    is_knowledge_base: Optional[bool] = Query(
+        None,
+        description="Filter by document type: true for knowledge base documents, false for analysis documents, null for both"),
     current_user: User = Depends(get_current_user)):
     """List all documents for a specific organization with pagination"""
     try:
@@ -282,7 +289,7 @@ async def list_organization_documents(
                                 detail="Access denied to organization")
 
         documents, total_count = await document_service.get_organization_documents_paginated(
-            organization_id=organization.id, page=page, per_page=per_page)
+            organization_id=organization.id, page=page, per_page=per_page, is_knowledge_base=is_knowledge_base)
 
         total_pages = math.ceil(total_count / per_page)
         duration = (datetime.now() - start_time).total_seconds()

@@ -818,7 +818,8 @@ class DocumentService:
         user_id: int,
         page: int = 1,
         per_page: int = 20,
-        organization_fp: Optional[str] = None
+        organization_fp: Optional[str] = None,
+        is_knowledge_base: Optional[bool] = None
     ) -> Tuple[List[File], int]:
         """
         Get all documents accessible to a user across their organizations.
@@ -828,6 +829,8 @@ class DocumentService:
             page: Page number for pagination
             per_page: Items per page
             organization_fp: Optional organization fingerprint to filter by organization
+            is_knowledge_base: Optional filter by document type. True for knowledge base documents,
+                              False for analysis documents, None for both
             
         Returns:
             Tuple of (documents, total_count)
@@ -866,18 +869,22 @@ class DocumentService:
                     org_ids = [organization.id]
                     logger.debug(f"Filtered to organization ID: {organization.id}")
 
+                # Build base filter conditions
+                conditions = [File.organization_id.in_(org_ids)]
+                
+                # Add is_knowledge_base filter if specified
+                if is_knowledge_base is not None:
+                    logger.info(f"Filtering documents by is_knowledge_base: {is_knowledge_base}")
+                    conditions.append(File.is_knowledge_base == is_knowledge_base)
+                
                 # Count total documents
-                count_stmt = select(func.count(File.id)).where(
-                    File.organization_id.in_(org_ids)
-                )
+                count_stmt = select(func.count(File.id)).where(*conditions)
                 result = await session.execute(count_stmt)
                 total_count = result.scalar()
 
-                # Get paginated documents without knowledge base
+                # Get paginated documents
                 offset = (page - 1) * per_page
-                stmt = select(File).where(
-                    File.organization_id.in_(org_ids)
-                ).order_by(
+                stmt = select(File).where(*conditions).order_by(
                     File.created_at.desc()
                 ).offset(offset).limit(per_page)
 
@@ -894,23 +901,37 @@ class DocumentService:
         self,
         organization_id: int,
         page: int = 1,
-        per_page: int = 20
+        per_page: int = 20,
+        is_knowledge_base: Optional[bool] = None
     ) -> Tuple[List[File], int]:
-        """Get paginated documents for an organization"""
+        """
+        Get paginated documents for an organization
+        
+        Args:
+            organization_id: ID of the organization
+            page: Page number for pagination
+            per_page: Items per page
+            is_knowledge_base: Optional filter by document type. True for knowledge base documents,
+                              False for analysis documents, None for both
+        """
         try:
             async with async_session_maker() as session:
+                # Build base conditions
+                conditions = [File.organization_id == organization_id]
+                
+                # Add is_knowledge_base filter if specified
+                if is_knowledge_base is not None:
+                    logger.info(f"Filtering organization documents by is_knowledge_base: {is_knowledge_base}")
+                    conditions.append(File.is_knowledge_base == is_knowledge_base)
+                
                 # Count total documents
-                count_stmt = select(func.count(File.id)).where(
-                    File.organization_id == organization_id
-                )
+                count_stmt = select(func.count(File.id)).where(*conditions)
                 result = await session.execute(count_stmt)
                 total_count = result.scalar()
 
-                # Get paginated documents without knowledge base
+                # Get paginated documents
                 offset = (page - 1) * per_page
-                stmt = select(File).where(
-                    File.organization_id == organization_id
-                ).order_by(
+                stmt = select(File).where(*conditions).order_by(
                     File.created_at.desc()
                 ).offset(offset).limit(per_page)
 
