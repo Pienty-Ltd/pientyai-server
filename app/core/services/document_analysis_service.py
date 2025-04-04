@@ -87,51 +87,54 @@ class DocumentAnalysisService:
             
             logger.info(f"Processing {total_chunks} chunks for document {document_id}")
             
-            # For each chunk in the document, perform semantic search and analyze
-            for chunk_index, document_chunk in enumerate(document_chunks):
-                chunk_start_time = datetime.now()
-                logger.info(f"Processing chunk {chunk_index + 1}/{total_chunks}")
+            # Instead of processing document chunk by chunk, analyze the whole document at once
+            logger.info(f"Processing entire document with all {total_chunks} chunks")
+            chunk_start_time = datetime.now()
+            
+            # Get the full document content (already combined at line 81)
+            full_document_content = original_content
+            
+            # Find the most relevant chunks from the knowledge base for the entire document
+            # This makes a single vector similarity search against the entire document content
+            relevant_kb_chunks = await self.find_relevant_knowledge_base_chunks(
+                organization_id=organization_id,
+                query_text=full_document_content,
+                current_document_id=document_id,  # Exclude the current document from search
+                limit=max_relevant_chunks * 2  # Get more context since we're analyzing the full document
+            )
+            
+            # Extract the content and add additional context from KB chunks for analysis
+            kb_content_list = []
+            for kb_chunk in relevant_kb_chunks:
+                # Add score info if available to help the AI understand relevance
+                if hasattr(kb_chunk, 'similarity_score'):
+                    score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
+                else:
+                    score_info = ""
                 
-                # Get the content of the current chunk
-                chunk_content = document_chunk.content
-                
-                # Find the most relevant chunks from the knowledge base for this document chunk
-                relevant_kb_chunks = await self.find_relevant_knowledge_base_chunks(
-                    organization_id=organization_id,
-                    query_text=chunk_content,
-                    current_document_id=document_id,  # Exclude the current document from search
-                    limit=max_relevant_chunks
-                )
-                
-                # Extract just the content from the KB chunks for analysis
-                kb_content_list = [kb_chunk.content for kb_chunk in relevant_kb_chunks]
-                
-                # Get the analysis for this chunk with context from relevant KB chunks
-                chunk_analysis = await self.openai_service.analyze_document(
-                    document_chunk=chunk_content,
-                    knowledge_base_chunks=kb_content_list
-                )
-                
-                # Check if the analysis contains an error
-                if "error" in chunk_analysis:
-                    error_msg = f"Chunk {chunk_index + 1} analysis failed: {chunk_analysis.get('error', 'Unknown error')}"
-                    logger.error(error_msg)
-                    # If this is the first chunk and it failed, we might want to fail the whole analysis
-                    if chunk_index == 0:
-                        await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
-                        raise ValueError(error_msg)
-                
-                # Add metadata about the chunk to the analysis result
-                chunk_analysis["chunk_index"] = chunk_index
-                chunk_analysis["chunk_content"] = chunk_content[:200] + "..." if len(chunk_content) > 200 else chunk_content
-                chunk_analysis["processing_time_seconds"] = (datetime.now() - chunk_start_time).total_seconds()
-                
-                # Add to the results list
-                analysis_results.append(chunk_analysis)
-                
-                # Small delay between chunks to avoid rate limits
-                if chunk_index < total_chunks - 1:
-                    await asyncio.sleep(0.5)
+                # Add chunk metadata to provide context
+                chunk_info = f"Document: {kb_chunk.file_id}, Chunk: {kb_chunk.chunk_index}{score_info}"
+                formatted_content = f"--- {chunk_info} ---\n{kb_chunk.content}"
+                kb_content_list.append(formatted_content)
+            
+            # Get the analysis for the entire document with context from relevant KB chunks
+            chunk_analysis = await self.openai_service.analyze_document(
+                document_chunk=full_document_content,
+                knowledge_base_chunks=kb_content_list
+            )
+            
+            # Check if the analysis contains an error
+            if "error" in chunk_analysis:
+                error_msg = f"Document analysis failed: {chunk_analysis.get('error', 'Unknown error')}"
+                logger.error(error_msg)
+                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
+                raise ValueError(error_msg)
+            
+            # Add metadata about the full document to the analysis result
+            chunk_analysis["processing_time_seconds"] = (datetime.now() - chunk_start_time).total_seconds()
+            
+            # Create a single analysis result
+            analysis_results = [chunk_analysis]
             
             # Create the final combined analysis
             total_duration = (datetime.now() - start_time).total_seconds()
@@ -287,27 +290,91 @@ class DocumentAnalysisService:
                     initial_limit = 1
                 
                 try:
-                    # Vektör sorgusu yaparken hata yakalama ekleyelim
+                    # Native pgvector similarity search with cosine distance
                     if query_embedding and len(query_embedding) > 0 and len(query_embedding[0]) > 0:
-                        similarity_query = base_query.order_by(
-                            func.l2_distance(KnowledgeBase.embedding, query_embedding[0])
-                        ).limit(initial_limit)
+                        # Using PostgreSQL's native vector operations with direct SQL execution for better performance
+                        logger.debug(f"Running pgvector search with embedding length: {len(query_embedding[0])}")
+                        
+                        # Create base query conditions
+                        conditions = [
+                            "organization_id = :org_id",
+                            "is_knowledge_base = TRUE"
+                        ]
+                        
+                        # Add condition to exclude current document if specified
+                        if current_document_id is not None:
+                            conditions.append("file_id != :doc_id")
+                            
+                        # Join all conditions
+                        where_clause = " AND ".join(conditions)
+                        
+                        # Build complete SQL query using native pgvector operator
+                        # 1 - (embedding <=> :query_vector) gives us similarity score between 0-1
+                        sql_query = f"""
+                            SELECT 
+                                kb.*,
+                                1 - (embedding <=> :query_vector) AS similarity_score
+                            FROM 
+                                knowledge_base kb
+                            WHERE 
+                                {where_clause}
+                            ORDER BY 
+                                similarity_score DESC
+                            LIMIT :limit
+                        """
+                        
+                        # Parameters for the query
+                        params = {
+                            "org_id": organization_id,
+                            "query_vector": query_embedding[0],
+                            "limit": initial_limit
+                        }
+                        
+                        if current_document_id is not None:
+                            params["doc_id"] = current_document_id
+                        
+                        # Execute raw SQL query
+                        from sqlalchemy import text
+                        async with async_session_maker() as session:
+                            result = await session.execute(text(sql_query), params)
+                            rows = result.fetchall()
+                            
+                            # Convert row results to KnowledgeBase objects with similarity scores
+                            top_chunks = []
+                            for row in rows:
+                                # Get KnowledgeBase object from row mapping
+                                chunk = row[0]  # The first column contains the entire KnowledgeBase object
+                                similarity = float(row[1])  # The last column is our similarity score
+                                
+                                # Attach similarity score to the object
+                                setattr(chunk, 'similarity_score', similarity)
+                                top_chunks.append(chunk)
+                                logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
+                            
+                            return top_chunks
                     else:
-                        # Eğer embedding oluşturulamadıysa veya geçersizse,
-                        # Basit bir sorgu ile en son eklenen knowledge base parçalarını getirelim
+                        # If embedding couldn't be created or is invalid,
+                        # Fall back to getting the most recently added knowledge base chunks
                         logger.warning("Invalid embedding for query, falling back to recent chunks")
                         similarity_query = base_query.order_by(
                             KnowledgeBase.created_at.desc()
                         ).limit(initial_limit)
+                        
+                        # Execute the ORM query
+                        result = await session.execute(similarity_query)
+                        top_chunks = result.scalars().all()
                 except Exception as e:
-                    # L2 distance fonksiyonu çalışmazsa en son parçaları getirelim
+                    # If vector search fails, get the most recent chunks
                     logger.error(f"Vector search failed: {str(e)}, falling back to recent chunks")
                     similarity_query = base_query.order_by(
                         KnowledgeBase.created_at.desc()
                     ).limit(initial_limit)
+                    
+                    # Execute the ORM query
+                    result = await session.execute(similarity_query)
+                    top_chunks = result.scalars().all()
                 
-                result = await session.execute(similarity_query)
-                top_chunks = result.scalars().all()
+# This section is no longer needed as we've handled result processing in the vector search block
                 
                 if not top_chunks:
                     return []
@@ -930,12 +997,28 @@ class DocumentAnalysisService:
         all_conflicts = set()
         all_recommendations = set()
         
+        # Keep track of chunks we've already processed to avoid duplicates
+        processed_chunk_indices = set()
+        
         # Process each chunk analysis
         for chunk in chunk_analyses:
+            chunk_index = chunk.get("chunk_index")
+            
+            # Skip if this chunk index has already been processed (avoid duplicates)
+            if chunk_index is not None and chunk_index in processed_chunk_indices:
+                continue
+            
+            # Mark this chunk as processed
+            if chunk_index is not None:
+                processed_chunk_indices.add(chunk_index)
+            
             # Store a reference to the individual chunk analysis
             chunk_summary = {
-                "chunk_index": chunk.get("chunk_index"),
+                "chunk_index": chunk_index,
+                "original_text": chunk.get("original_text", ""),
                 "analysis": chunk.get("analysis", ""),
+                "conflict": chunk.get("conflict", ""),
+                "suggested_improvement": chunk.get("suggested_improvement", "")
             }
             combined["chunk_analyses"].append(chunk_summary)
             
@@ -960,8 +1043,12 @@ class DocumentAnalysisService:
         # Build a comprehensive analysis summary
         analysis_parts = []
         for chunk in chunk_analyses:
-            if "analysis" in chunk and chunk["analysis"]:
-                analysis_parts.append(chunk["analysis"])
+            # Skip duplicates when building analysis parts too
+            chunk_index = chunk.get("chunk_index")
+            if chunk_index is not None and chunk_index in processed_chunk_indices:
+                processed_chunk_indices.remove(chunk_index)  # Remove so we process each index exactly once
+                if "analysis" in chunk and chunk["analysis"]:
+                    analysis_parts.append(chunk["analysis"])
         
         # Join the analysis parts with logical transitions
         if analysis_parts:

@@ -145,9 +145,10 @@ class OpenAIService:
             """
 
             # Construct the user message with knowledge base context
+            # Each chunk already contains its document and chunk information with similarity score
             kb_context = "\n\n".join([
-                f"KNOWLEDGE BASE DOCUMENT CHUNK {i+1}:\n{chunk}"
-                for i, chunk in enumerate(knowledge_base_chunks)
+                f"KNOWLEDGE BASE EXCERPT:\n{chunk}" 
+                for chunk in knowledge_base_chunks
             ])
 
             user_message = f"""
