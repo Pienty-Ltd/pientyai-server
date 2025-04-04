@@ -146,10 +146,33 @@ class DocumentAnalysisService:
             combined_analysis["total_chunks_analyzed"] = total_chunks
             combined_analysis["processing_time_seconds"] = total_duration
             
-            # Generate suggested changes based on the analysis
+            # Generate detailed suggested changes based on the analysis
+            # Extract more information from the combined analysis to enhance the suggested changes
+            conflicts = combined_analysis.get("conflicts", [])
+            recommendations = combined_analysis.get("recommendations", [])
+            
+            # Add specific details to the analysis_results to generate better suggested changes
+            enhanced_results = []
+            for result in analysis_results:
+                # Copy the original result
+                enhanced_result = result.copy()
+                
+                # Add the original document content for context
+                enhanced_result["original_content"] = original_content
+                
+                # Add overall conflicts and recommendations for better context
+                if "conflicts" not in enhanced_result or not enhanced_result["conflicts"]:
+                    enhanced_result["conflicts"] = conflicts
+                
+                if "recommendations" not in enhanced_result or not enhanced_result["recommendations"]:
+                    enhanced_result["recommendations"] = recommendations
+                
+                enhanced_results.append(enhanced_result)
+            
+            # Generate more detailed suggested changes with the enhanced context
             suggested_changes = await self._generate_suggested_changes(
                 original_content=original_content,
-                analysis_results=analysis_results
+                analysis_results=enhanced_results
             )
             
             # Update the record with the results
@@ -927,6 +950,10 @@ class DocumentAnalysisService:
         Generate suggested changes for the document based on analysis results.
         This method creates a structured representation of suggested changes
         that can be used to show a "diff" between original and suggested content.
+        
+        Now enhanced to focus on specific legal and policy-based recommendations,
+        highlighting exact terms that need to be changed and providing concrete
+        suggestions for improvement.
         """
         try:
             # Extract all recommendations from the analysis results
@@ -937,33 +964,77 @@ class DocumentAnalysisService:
                         if isinstance(rec, str) and rec not in all_recommendations:
                             all_recommendations.append(rec)
             
-            # Structure the suggestions
+            # Structure the suggestions with more detailed information
             suggestions = {
                 "recommendations": all_recommendations,
-                "sections": []
+                "sections": [],
+                "policy_conflicts": [],
+                "legal_compliance_issues": []
             }
             
-            # Go through each chunk and find parts that need changes
+            # Go through each chunk and find parts that need specific changes
             for chunk in analysis_results:
                 chunk_index = chunk.get("chunk_index", 0)
                 chunk_content = chunk.get("chunk_content", "")
                 conflicts = chunk.get("conflicts", [])
                 
                 if conflicts:
-                    # For each conflict, add a suggested change section
+                    # For each conflict, add a detailed suggested change section
                     for conflict in conflicts:
-                        suggestions["sections"].append({
+                        # Try to extract more specific information from the conflict text
+                        section_match = None
+                        rate_match = None
+                        policy_match = None
+                        
+                        # Example patterns to extract: "Section X.Y", "Z% rate", etc.
+                        import re
+                        section_pattern = r'([Ss]ection|[Mm]adde|[Bb]ölüm)\s+(\d+(\.\d+)?)'
+                        rate_pattern = r'(\d+(\.\d+)?)(\s*[%]|\s+yüzde|\s+faiz)'
+                        
+                        section_match = re.search(section_pattern, conflict)
+                        rate_match = re.search(rate_pattern, conflict)
+                        
+                        section_info = f"Section {section_match.group(2)}" if section_match else "Unspecified section"
+                        rate_info = rate_match.group(1) if rate_match else None
+                        
+                        # Create a more detailed suggested change
+                        suggested_improvement = "This section should be revised to align with company policies and legal requirements."
+                        if "faiz" in conflict.lower() or "interest" in conflict.lower() or rate_match:
+                            suggested_improvement = f"Update the interest rate to comply with company policy."
+                            if rate_info:
+                                suggested_improvement = f"Change the interest rate of {rate_info}% to match company policy."
+                        
+                        # Check if this is a policy conflict
+                        is_policy_conflict = "politika" in conflict.lower() or "policy" in conflict.lower() or "şirket" in conflict.lower() or "company" in conflict.lower()
+                        is_legal_issue = "kanun" in conflict.lower() or "yasa" in conflict.lower() or "law" in conflict.lower() or "regulation" in conflict.lower() or "mevzuat" in conflict.lower()
+                        
+                        change_section = {
                             "chunk_index": chunk_index,
+                            "section": section_info,
                             "original_text": chunk_content,
                             "conflict": conflict,
-                            "suggested_improvement": "This section has conflicts that should be addressed."
-                        })
+                            "suggested_improvement": suggested_improvement,
+                            "is_policy_conflict": is_policy_conflict,
+                            "is_legal_issue": is_legal_issue
+                        }
+                        
+                        suggestions["sections"].append(change_section)
+                        
+                        # Also add to the appropriate categorized list
+                        if is_policy_conflict:
+                            suggestions["policy_conflicts"].append(conflict)
+                        if is_legal_issue:
+                            suggestions["legal_compliance_issues"].append(conflict)
+            
+            # Remove duplicates from categorized lists
+            suggestions["policy_conflicts"] = list(set(suggestions["policy_conflicts"]))
+            suggestions["legal_compliance_issues"] = list(set(suggestions["legal_compliance_issues"]))
             
             return suggestions
             
         except Exception as e:
             logger.error(f"Error generating suggested changes: {str(e)}")
-            return {"recommendations": [], "sections": []}
+            return {"recommendations": [], "sections": [], "policy_conflicts": [], "legal_compliance_issues": []}
     
     def _combine_chunk_analyses(self, chunk_analyses: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

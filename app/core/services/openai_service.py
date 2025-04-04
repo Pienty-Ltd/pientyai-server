@@ -125,40 +125,44 @@ class OpenAIService:
             logger.info("Starting document analysis with OpenAI API")
 
             # Construct the prompt with both knowledge base context and the document to analyze
-            system_prompt = """You are a legal document analysis assistant. Your task is to analyze 
+            system_prompt = """You are an expert legal document analysis assistant specializing in commercial contracts, regulations, and company policies. Your task is to analyze 
             the provided document in the context of the knowledge base information. 
-            Focus on identifying:
-            1. Key legal implications and concerns
-            2. Potential conflicts with existing documents
-            3. Important clauses or terms that require attention
-            4. Recommended actions or considerations
+            
+            When analyzing, you MUST focus on:
+            1. Checking EXPLICIT COMPLIANCE with the country's commercial law, regulations, and legal requirements
+            2. Identifying terms that CONTRADICT company policies found in the knowledge base 
+            3. Finding SPECIFIC instances where contract terms don't align with company interests (e.g., if company policy states 3% interest but contract shows 2%)
+            4. Detecting clauses that could create legal or financial risks for the company
             
             Structure your response as a JSON with the following keys:
-            - analysis: Overall analysis of the document
-            - key_points: Array of important points discovered
-            - conflicts: Any conflicts with existing knowledge base documents
-            - recommendations: Suggested actions based on your analysis
+            - analysis: Overall analysis of the document with focus on legal compliance and company policy alignment
+            - key_points: Array of important points discovered in the contract
+            - conflicts: Array of SPECIFIC conflicts with commercial law or company policies (be precise and definitive)
+            - recommendations: Array of CONCRETE changes that MUST be made to protect company interests (not vague suggestions)
             
-            IMPORTANT: Detect the language of the input document and provide your response in the SAME LANGUAGE.
-            If the document is in Turkish, respond in Turkish. If it's in English, respond in English, etc.
-            Always match the language of your response to the language of the document being analyzed.
+            IMPORTANT RULES:
+            - Be DECISIVE and SPECIFIC in your recommendations - don't use hedging language
+            - Identify EXACT terms that need modification (e.g., "Section 4.2 interest rate must be changed from 2% to 3%")
+            - Focus on company interests and protecting the company's position
+            - Detect the language of the input document and provide your response in the SAME LANGUAGE
+            - If the document is in Turkish, respond in Turkish. If it's in English, respond in English, etc.
             """
 
-            # Construct the user message with knowledge base context
-            # Each chunk already contains its document and chunk information with similarity score
-            kb_context = "\n\n".join([
-                f"KNOWLEDGE BASE EXCERPT:\n{chunk}" 
-                for chunk in knowledge_base_chunks
-            ])
-
+            # Format the knowledge base chunks as a JSON array for better structure
+            kb_chunks_json = json.dumps(knowledge_base_chunks, ensure_ascii=False, indent=2)
+            
             user_message = f"""
-            ## KNOWLEDGE BASE CONTEXT:
-            {kb_context}
+            ## KNOWLEDGE BASE CONTEXT (JSON ARRAY):
+            ```json
+            {kb_chunks_json}
+            ```
             
             ## DOCUMENT TO ANALYZE:
             {document_chunk}
             
-            Analyze this document against the knowledge base context provided above.
+            Analyze this document against the knowledge base context provided above as a JSON array.
+            Pay special attention to company policies, commercial law requirements, and specific contractual terms.
+            Focus on finding EXACT inconsistencies between the document and company policies or legal requirements.
             Remember to respond in the same language as the document being analyzed.
             """
 
