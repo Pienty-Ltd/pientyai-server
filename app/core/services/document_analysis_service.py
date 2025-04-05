@@ -95,21 +95,123 @@ class DocumentAnalysisService:
             chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
             
             # SINGLE PHASE: Complete document analysis in a unified approach
-            logger.info(f"Running unified document analysis process")
+            logger.info(f"Running unified document analysis process with comprehensive knowledge base collection")
             
-            # First collect relevant knowledge base chunks for the full document
-            logger.info(f"Finding relevant KB chunks for the entire document")
+            # First collect relevant knowledge base chunks for EACH document chunk to ensure extensive coverage
+            logger.info(f"Finding relevant KB chunks for all {total_chunks} chunks in the document")
             
-            # Find the most relevant chunks from the knowledge base for the full document
             full_document_content = original_content
             
-            # Find most relevant knowledge base chunks for the entire document
-            document_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+            # Set to track unique knowledge base chunks across all chunk searches
+            all_relevant_kb_chunks = set()  # Using a set to avoid duplicates
+            
+            # Process each document chunk to find relevant KB chunks
+            for chunk_idx, doc_chunk in enumerate(document_chunks):
+                chunk_content = doc_chunk.content
+                logger.info(f"Finding relevant KB chunks for chunk {chunk_idx+1}/{total_chunks}")
+                
+                # Find the most relevant chunks from the knowledge base for this specific chunk
+                chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+                    organization_id=organization_id,
+                    query_text=chunk_content,
+                    current_document_id=document_id,  # Exclude the current document from search
+                    limit=max_relevant_chunks  # Get context specific to this chunk
+                )
+                
+                # Add all relevant chunks to our global set, tracking by file_id and chunk_index
+                # Also add sufficient context by including adjacent chunks when available
+                for kb_chunk in chunk_relevant_kb:
+                    # Add the current chunk
+                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                    all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+                    
+                    # Try to get and add all surrounding chunks too for better context
+                    try:
+                        # Get adjacent chunks for better context (2 before and 2 after)
+                        # This helps with cases where information is split across chunks
+                        async with async_session_maker() as session:
+                            # Get up to 2 chunks before
+                            before_query = select(KnowledgeBase).where(
+                                KnowledgeBase.file_id == kb_chunk.file_id,
+                                KnowledgeBase.is_knowledge_base == True,
+                                KnowledgeBase.chunk_index < kb_chunk.chunk_index
+                            ).order_by(desc(KnowledgeBase.chunk_index)).limit(2)
+                            
+                            before_result = await session.execute(before_query)
+                            before_chunks = before_result.scalars().all()
+                            
+                            # Get up to 2 chunks after
+                            after_query = select(KnowledgeBase).where(
+                                KnowledgeBase.file_id == kb_chunk.file_id,
+                                KnowledgeBase.is_knowledge_base == True,
+                                KnowledgeBase.chunk_index > kb_chunk.chunk_index
+                            ).order_by(KnowledgeBase.chunk_index).limit(2)
+                            
+                            after_result = await session.execute(after_query)
+                            after_chunks = after_result.scalars().all()
+                            
+                            # Add all adjacent chunks to our set
+                            for adj_chunk in before_chunks + after_chunks:
+                                adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
+                                all_relevant_kb_chunks.add((adj_key, adj_chunk))
+                    except Exception as e:
+                        logger.warning(f"Error getting adjacent chunks: {str(e)}")
+                        # Continue with the process even if getting adjacent chunks fails
+            
+            logger.info(f"Collected {len(all_relevant_kb_chunks)} unique KB chunks across all document chunks")
+            
+            # Also search using the full document text to catch overall context
+            logger.info(f"Finding additional KB chunks using the full document content")
+            full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                 organization_id=organization_id,
                 query_text=full_document_content,
-                current_document_id=document_id,  # Exclude the current document from search
-                limit=max_relevant_chunks * 2  # Get more chunks for a full document
+                current_document_id=document_id,
+                limit=max_relevant_chunks * 2  # Get more chunks for the full document
             )
+            
+            # Add these to our set of unique chunks as well along with their adjacent context
+            for kb_chunk in full_doc_relevant_kb:
+                # Add the main chunk
+                chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+                
+                # Try to get and add all surrounding chunks too for better context
+                try:
+                    # Get adjacent chunks for better context (2 before and 2 after)
+                    # This helps with cases where information is split across chunks
+                    async with async_session_maker() as session:
+                        # Get up to 2 chunks before
+                        before_query = select(KnowledgeBase).where(
+                            KnowledgeBase.file_id == kb_chunk.file_id,
+                            KnowledgeBase.is_knowledge_base == True,
+                            KnowledgeBase.chunk_index < kb_chunk.chunk_index
+                        ).order_by(desc(KnowledgeBase.chunk_index)).limit(2)
+                        
+                        before_result = await session.execute(before_query)
+                        before_chunks = before_result.scalars().all()
+                        
+                        # Get up to 2 chunks after
+                        after_query = select(KnowledgeBase).where(
+                            KnowledgeBase.file_id == kb_chunk.file_id,
+                            KnowledgeBase.is_knowledge_base == True,
+                            KnowledgeBase.chunk_index > kb_chunk.chunk_index
+                        ).order_by(KnowledgeBase.chunk_index).limit(2)
+                        
+                        after_result = await session.execute(after_query)
+                        after_chunks = after_result.scalars().all()
+                        
+                        # Add all adjacent chunks to our set
+                        for adj_chunk in before_chunks + after_chunks:
+                            adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
+                            all_relevant_kb_chunks.add((adj_key, adj_chunk))
+                except Exception as e:
+                    logger.warning(f"Error getting adjacent chunks: {str(e)}")
+                    # Continue with the process even if getting adjacent chunks fails
+                
+            logger.info(f"Total unique KB chunks after full document search: {len(all_relevant_kb_chunks)}")
+            
+            # Extract the actual chunk objects from the set of tuples
+            document_relevant_kb = [chunk_tuple[1] for chunk_tuple in all_relevant_kb_chunks]
             
             # Convert the chunks to a list of KB chunk info dictionaries with rich metadata
             consolidated_kb_chunks = []

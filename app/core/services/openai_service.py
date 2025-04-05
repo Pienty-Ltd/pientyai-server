@@ -169,10 +169,15 @@ class OpenAIService:
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
-            kb_chunks_json = json.dumps(knowledge_base_chunks, ensure_ascii=False, indent=2)
+            # Add a note about chunk count to the KB chunks to help with processing
+            kb_chunks_with_note = {
+                "total_kb_chunks": len(knowledge_base_chunks),
+                "kb_chunks": knowledge_base_chunks
+            }
+            kb_chunks_json = json.dumps(kb_chunks_with_note, ensure_ascii=False, indent=2)
             
             user_message = f"""
-            ## KNOWLEDGE BASE CONTEXT (KURUMSAL POLİTİKA VE MEVZUAT BİLGİLERİ - JSON ARRAY):
+            ## KNOWLEDGE BASE CONTEXT (KURUMSAL POLİTİKA VE MEVZUAT BİLGİLERİ - JSON OBJECT):
             ```json
             {kb_chunks_json}
             ```
@@ -181,11 +186,12 @@ class OpenAIService:
             {document_chunk}
             
             DETAILED ANALYSIS INSTRUCTIONS:
-            1. Perform a line-by-line comparison between the document and knowledge base entries
-            2. Identify EACH NUMBER, PERCENTAGE, DATE, TIMEFRAME or SPECIFIC TERM that does not match company policy
-            3. For each issue found, specify EXACT section references (e.g., "Section 3.2.1" or "Madde 5.4")
-            4. Whenever you identify a problem, provide the EXACT current value and the EXACT required corrected value
-            5. Indicate the SPECIFIC policy or legal requirement from knowledge base that is being violated
+            1. Review all {len(knowledge_base_chunks)} knowledge base chunks in the data
+            2. Perform a thorough comparison between the document and ALL knowledge base entries
+            3. Identify EACH NUMBER, PERCENTAGE, DATE, TIMEFRAME or SPECIFIC TERM that does not match company policy
+            4. For each issue found, specify EXACT section references (e.g., "Section 3.2.1" or "Madde 5.4")
+            5. Whenever you identify a problem, provide the EXACT current value and the EXACT required corrected value
+            6. Indicate the SPECIFIC policy or legal requirement from knowledge base that is being violated
             
             CRITICAL FOCUS AREAS:
             - Payment terms (ödeme koşulları)
