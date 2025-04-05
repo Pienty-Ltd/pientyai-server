@@ -99,16 +99,16 @@ class OpenAIService:
 
     async def analyze_document(self,
                                document_chunk: str,
-                               knowledge_base_chunks: List[str]) -> Dict[str, Any]:
+                               knowledge_base_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Analyze a document chunk against relevant knowledge base chunks using OpenAI API
+        Analyze a complete document against relevant knowledge base chunks using OpenAI API
         
         Args:
-            document_chunk: The chunk of text from the document to analyze
-            knowledge_base_chunks: List of relevant knowledge base chunks for context
+            document_chunk: The full text of the document to analyze
+            knowledge_base_chunks: List of dictionaries containing relevant knowledge base chunks with metadata
             
         Returns:
-            Dictionary containing the analysis result
+            Dictionary containing the comprehensive analysis result
         """
         try:
             if not config.OPENAI_API_KEY:

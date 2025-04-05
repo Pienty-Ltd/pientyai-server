@@ -94,44 +94,28 @@ class DocumentAnalysisService:
             all_analyses = []
             chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
             
-            # PHASE 1: Process all document chunks with a consolidated approach
-            logger.info(f"Phase 1: Collecting relevant knowledge base chunks for all document chunks")
+            # SINGLE PHASE: Complete document analysis in a unified approach
+            logger.info(f"Running unified document analysis process")
             
-            # First collect relevant knowledge base chunks for all document chunks
-            all_document_chunks_info = []
-            all_relevant_kb_chunks = set()  # Use a set to track unique chunks by file_id and chunk_index
-            chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
+            # First collect relevant knowledge base chunks for the full document
+            logger.info(f"Finding relevant KB chunks for the entire document")
             
-            for chunk_idx, doc_chunk in enumerate(document_chunks):
-                chunk_content = doc_chunk.content
-                all_document_chunks_info.append({
-                    "chunk_index": chunk_idx,
-                    "content": chunk_content
-                })
-                
-                logger.info(f"Finding relevant KB chunks for document chunk {chunk_idx+1}/{total_chunks}")
-                
-                # Find the most relevant chunks from the knowledge base for this specific chunk
-                chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
-                    organization_id=organization_id,
-                    query_text=chunk_content,
-                    current_document_id=document_id,  # Exclude the current document from search
-                    limit=max_relevant_chunks  # Get context specific to this chunk
-                )
-                
-                # Save the mapping for later use
-                chunk_kb_mapping[chunk_idx] = chunk_relevant_kb
-                
-                # Add all relevant chunks to our global set, tracking them by file_id and chunk_index
-                for kb_chunk in chunk_relevant_kb:
-                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
-                    all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+            # Find the most relevant chunks from the knowledge base for the full document
+            full_document_content = original_content
             
-            # Convert the set of chunks to a list of KB chunk info dictionaries
+            # Find most relevant knowledge base chunks for the entire document
+            document_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+                organization_id=organization_id,
+                query_text=full_document_content,
+                current_document_id=document_id,  # Exclude the current document from search
+                limit=max_relevant_chunks * 2  # Get more chunks for a full document
+            )
+            
+            # Convert the chunks to a list of KB chunk info dictionaries with rich metadata
             consolidated_kb_chunks = []
             from app.database.models.db_models import File
             
-            for _, kb_chunk in all_relevant_kb_chunks:
+            for kb_chunk in document_relevant_kb:
                 # Get file name for better context
                 file_name = "Unknown"
                 try:
@@ -155,48 +139,15 @@ class DocumentAnalysisService:
                 }
                 consolidated_kb_chunks.append(chunk_info)
             
-            logger.info(f"Consolidated {len(consolidated_kb_chunks)} unique knowledge base chunks from all document chunks")
+            logger.info(f"Found {len(consolidated_kb_chunks)} relevant knowledge base chunks for analysis")
             
-            # Now perform a single analysis for each document chunk with the full consolidated KB context
-            for chunk_idx, doc_chunk in enumerate(document_chunks):
-                chunk_start_time = datetime.now()
-                chunk_content = doc_chunk.content
-                
-                # Get the analysis for this chunk with the consolidated KB context
-                try:
-                    logger.info(f"Analyzing document chunk {chunk_idx+1}/{total_chunks} with {len(consolidated_kb_chunks)} consolidated KB chunks")
-                    
-                    single_chunk_analysis = await self.openai_service.analyze_document(
-                        document_chunk=chunk_content,
-                        knowledge_base_chunks=consolidated_kb_chunks
-                    )
-                    
-                    # Add chunk metadata to the analysis
-                    single_chunk_analysis["chunk_index"] = chunk_idx
-                    single_chunk_analysis["chunk_content"] = chunk_content
-                    single_chunk_analysis["processing_time_seconds"] = (datetime.now() - chunk_start_time).total_seconds()
-                    
-                    all_analyses.append(single_chunk_analysis)
-                    logger.info(f"Successfully analyzed document chunk {chunk_idx+1}/{total_chunks}")
-                    
-                except Exception as e:
-                    logger.error(f"Error analyzing document chunk {chunk_idx+1}: {str(e)}")
-            
-            # PHASE 2: Analyze the entire document with consolidated KB chunks
-            # This gives a big-picture perspective that individual chunk analysis might miss
-            logger.info(f"Phase 2: Analyzing entire document with consolidated KB chunks")
+            # Perform a single comprehensive analysis with the full document against all relevant KB chunks
             chunk_start_time = datetime.now()
             
-            # Get the full document content (already combined at line 81)
-            full_document_content = original_content
+            # Send only ONE request to OpenAI for the entire document analysis
+            logger.info(f"Analyzing full document with {len(consolidated_kb_chunks)} relevant KB chunks in a single request")
             
-            # We already have consolidated KB chunks from Phase 1, so we can use them directly
-            # No need to regenerate the same information
-            
-            # Get the analysis for the entire document with the consolidated KB chunks we created in Phase 1
-            logger.info(f"Analyzing full document with {len(consolidated_kb_chunks)} consolidated KB chunks")
-            
-            # Get the full document analysis with consolidated knowledge base chunks
+            # Get the full document analysis with all relevant knowledge base chunks
             full_doc_analysis = await self.openai_service.analyze_document(
                 document_chunk=full_document_content,
                 knowledge_base_chunks=consolidated_kb_chunks
