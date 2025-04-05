@@ -214,8 +214,12 @@ class DocumentAnalysisService:
             document_relevant_kb = [chunk_tuple[1] for chunk_tuple in all_relevant_kb_chunks]
             
             # Convert the chunks to a list of KB chunk info dictionaries with rich metadata
+            # ONLY include chunks with similarity_score > 0.5 (50%) to avoid irrelevant content
             consolidated_kb_chunks = []
             from app.database.models.db_models import File
+            
+            # Define similarity threshold - only include chunks with at least 50% similarity
+            SIMILARITY_THRESHOLD = 0.5  # 50% similarity threshold
             
             for kb_chunk in document_relevant_kb:
                 # Get file name for better context
@@ -230,16 +234,27 @@ class DocumentAnalysisService:
                 except Exception as e:
                     logger.error(f"Error retrieving filename: {str(e)}")
                 
-                # Add rich metadata to provide better context
-                chunk_info = {
-                    "document_name": file_name,
-                    "document_id": kb_chunk.file_id,
-                    "chunk_index": kb_chunk.chunk_index,
-                    "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
-                    "content": kb_chunk.content,
-                    "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
-                }
-                consolidated_kb_chunks.append(chunk_info)
+                # Only include chunks with similarity_score > SIMILARITY_THRESHOLD (50%)
+                similarity_score = getattr(kb_chunk, 'similarity_score', 0)
+                
+                # Log the similarity score for debugging
+                logger.debug(f"KB Chunk {kb_chunk.file_id}_{kb_chunk.chunk_index} has similarity: {similarity_score}")
+                
+                # Only add chunks that meet the threshold
+                if similarity_score >= SIMILARITY_THRESHOLD:
+                    # Add rich metadata to provide better context 
+                    chunk_info = {
+                        "document_name": file_name,
+                        "document_id": kb_chunk.file_id,
+                        "chunk_index": kb_chunk.chunk_index,
+                        "similarity_score": similarity_score,
+                        "content": kb_chunk.content,
+                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                    }
+                    consolidated_kb_chunks.append(chunk_info)
+                    logger.debug(f"Added KB chunk with similarity score: {similarity_score}")
+                else:
+                    logger.debug(f"Skipped KB chunk: similarity {similarity_score} below threshold {SIMILARITY_THRESHOLD}")
             
             logger.info(f"Found {len(consolidated_kb_chunks)} relevant knowledge base chunks for analysis")
             
@@ -511,10 +526,15 @@ class DocumentAnalysisService:
                                 chunk = row[0]  # The first column contains the entire KnowledgeBase object
                                 similarity = float(row[1])  # The last column is our similarity score
                                 
-                                # Attach similarity score to the object
-                                setattr(chunk, 'similarity_score', similarity)
-                                top_chunks.append(chunk)
-                                logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
+                                # Only include chunks with similarity > 0.5 (50%)
+                                # This is the first filter - we need to make sure the initial chunks from vector search exceed our threshold
+                                if similarity >= 0.5:  # Only accept chunks with at least 50% similarity
+                                    # Attach similarity score to the object
+                                    setattr(chunk, 'similarity_score', similarity)
+                                    top_chunks.append(chunk)
+                                    logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
+                                else:
+                                    logger.debug(f"Skipped low similarity chunk {chunk.chunk_index} (score: {similarity:.4f})")
                             
                             # Now get adjacent chunks (one before and one after each top chunk)
                             # This helps avoid truncated information due to chunk boundaries
