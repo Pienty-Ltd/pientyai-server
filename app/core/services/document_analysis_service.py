@@ -94,12 +94,20 @@ class DocumentAnalysisService:
             all_analyses = []
             chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
             
-            # PHASE 1: Process each chunk individually to capture detailed context
-            logger.info(f"Phase 1: Processing {total_chunks} chunks individually")
+            # PHASE 1: Process all document chunks with a consolidated approach
+            logger.info(f"Phase 1: Collecting relevant knowledge base chunks for all document chunks")
+            
+            # First collect relevant knowledge base chunks for all document chunks
+            all_document_chunks_info = []
+            all_relevant_kb_chunks = set()  # Use a set to track unique chunks by file_id and chunk_index
+            chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
             
             for chunk_idx, doc_chunk in enumerate(document_chunks):
-                chunk_start_time = datetime.now()
                 chunk_content = doc_chunk.content
+                all_document_chunks_info.append({
+                    "chunk_index": chunk_idx,
+                    "content": chunk_content
+                })
                 
                 logger.info(f"Finding relevant KB chunks for document chunk {chunk_idx+1}/{total_chunks}")
                 
@@ -114,52 +122,53 @@ class DocumentAnalysisService:
                 # Save the mapping for later use
                 chunk_kb_mapping[chunk_idx] = chunk_relevant_kb
                 
-                # Skip analysis if no relevant KB chunks found
-                if not chunk_relevant_kb:
-                    logger.warning(f"No relevant KB chunks found for document chunk {chunk_idx}, skipping individual analysis")
-                    continue
-                
-                # Extract the content and add additional context from KB chunks for analysis
-                kb_chunk_content_list = []
-                
+                # Add all relevant chunks to our global set, tracking them by file_id and chunk_index
                 for kb_chunk in chunk_relevant_kb:
-                    # Add score info if available to help the AI understand relevance
-                    if hasattr(kb_chunk, 'similarity_score'):
-                        score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
-                    else:
-                        score_info = ""
-                    
-                    # Add document reference info
-                    from app.database.models.db_models import File
-                    file_name = "Unknown"
-                    try:
-                        async with async_session_maker() as session:
-                            file_query = select(File).where(File.id == kb_chunk.file_id)
-                            file_result = await session.execute(file_query)
-                            file = file_result.scalar_one_or_none()
-                            if file:
-                                file_name = file.filename
-                    except Exception as e:
-                        logger.error(f"Error retrieving filename: {str(e)}")
-                    
-                    # Add rich metadata to provide better context
-                    chunk_info = {
-                        "document_name": file_name,
-                        "document_id": kb_chunk.file_id,
-                        "chunk_index": kb_chunk.chunk_index,
-                        "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
-                        "content": kb_chunk.content,
-                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
-                    }
-                    kb_chunk_content_list.append(chunk_info)
-                
-                logger.info(f"Analyzing document chunk {chunk_idx+1}/{total_chunks} with {len(kb_chunk_content_list)} relevant KB chunks")
-                
-                # Get the analysis for this specific chunk with its relevant KB context
+                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                    all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+            
+            # Convert the set of chunks to a list of KB chunk info dictionaries
+            consolidated_kb_chunks = []
+            from app.database.models.db_models import File
+            
+            for _, kb_chunk in all_relevant_kb_chunks:
+                # Get file name for better context
+                file_name = "Unknown"
                 try:
+                    async with async_session_maker() as session:
+                        file_query = select(File).where(File.id == kb_chunk.file_id)
+                        file_result = await session.execute(file_query)
+                        file = file_result.scalar_one_or_none()
+                        if file:
+                            file_name = file.filename
+                except Exception as e:
+                    logger.error(f"Error retrieving filename: {str(e)}")
+                
+                # Add rich metadata to provide better context
+                chunk_info = {
+                    "document_name": file_name,
+                    "document_id": kb_chunk.file_id,
+                    "chunk_index": kb_chunk.chunk_index,
+                    "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
+                    "content": kb_chunk.content,
+                    "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                }
+                consolidated_kb_chunks.append(chunk_info)
+            
+            logger.info(f"Consolidated {len(consolidated_kb_chunks)} unique knowledge base chunks from all document chunks")
+            
+            # Now perform a single analysis for each document chunk with the full consolidated KB context
+            for chunk_idx, doc_chunk in enumerate(document_chunks):
+                chunk_start_time = datetime.now()
+                chunk_content = doc_chunk.content
+                
+                # Get the analysis for this chunk with the consolidated KB context
+                try:
+                    logger.info(f"Analyzing document chunk {chunk_idx+1}/{total_chunks} with {len(consolidated_kb_chunks)} consolidated KB chunks")
+                    
                     single_chunk_analysis = await self.openai_service.analyze_document(
                         document_chunk=chunk_content,
-                        knowledge_base_chunks=kb_chunk_content_list
+                        knowledge_base_chunks=consolidated_kb_chunks
                     )
                     
                     # Add chunk metadata to the analysis
@@ -173,7 +182,7 @@ class DocumentAnalysisService:
                 except Exception as e:
                     logger.error(f"Error analyzing document chunk {chunk_idx+1}: {str(e)}")
             
-            # PHASE 2: Also analyze the entire document with consolidated KB chunks
+            # PHASE 2: Analyze the entire document with consolidated KB chunks
             # This gives a big-picture perspective that individual chunk analysis might miss
             logger.info(f"Phase 2: Analyzing entire document with consolidated KB chunks")
             chunk_start_time = datetime.now()
@@ -181,92 +190,16 @@ class DocumentAnalysisService:
             # Get the full document content (already combined at line 81)
             full_document_content = original_content
             
-            # Consolidate all relevant KB chunks from individual analyses
-            all_kb_chunks = []
-            seen_kb_chunks = set()  # To avoid duplicates
+            # We already have consolidated KB chunks from Phase 1, so we can use them directly
+            # No need to regenerate the same information
             
-            # First add all KB chunks from individual analyses
-            for chunk_kb in chunk_kb_mapping.values():
-                for kb_chunk in chunk_kb:
-                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
-                    if chunk_key not in seen_kb_chunks:
-                        seen_kb_chunks.add(chunk_key)
-                        
-                        # Add rich metadata as we did for individual chunks
-                        if hasattr(kb_chunk, 'similarity_score'):
-                            score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
-                        else:
-                            score_info = ""
-                        
-                        # Get file name
-                        file_name = "Unknown"
-                        try:
-                            async with async_session_maker() as session:
-                                file_query = select(File).where(File.id == kb_chunk.file_id)
-                                file_result = await session.execute(file_query)
-                                file = file_result.scalar_one_or_none()
-                                if file:
-                                    file_name = file.filename
-                        except Exception as e:
-                            logger.error(f"Error retrieving filename: {str(e)}")
-                            
-                        chunk_info = {
-                            "document_name": file_name,
-                            "document_id": kb_chunk.file_id,
-                            "chunk_index": kb_chunk.chunk_index,
-                            "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
-                            "content": kb_chunk.content,
-                            "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
-                        }
-                        all_kb_chunks.append(chunk_info)
-            
-            # As a fallback, if no KB chunks were found for individual chunks, find some for the whole document
-            if not all_kb_chunks:
-                logger.warning("No KB chunks found from individual chunk analysis, finding for entire document")
-                
-                # Find the most relevant chunks from KB for the entire document as fallback
-                relevant_kb_chunks = await self.find_relevant_knowledge_base_chunks(
-                    organization_id=organization_id,
-                    query_text=full_document_content,
-                    current_document_id=document_id,
-                    limit=max_relevant_chunks * 2
-                )
-                
-                for kb_chunk in relevant_kb_chunks:
-                    if hasattr(kb_chunk, 'similarity_score'):
-                        score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
-                    else:
-                        score_info = ""
-                    
-                    # Get file name
-                    file_name = "Unknown"
-                    try:
-                        async with async_session_maker() as session:
-                            file_query = select(File).where(File.id == kb_chunk.file_id)
-                            file_result = await session.execute(file_query)
-                            file = file_result.scalar_one_or_none()
-                            if file:
-                                file_name = file.filename
-                    except Exception as e:
-                        logger.error(f"Error retrieving filename: {str(e)}")
-                        
-                    chunk_info = {
-                        "document_name": file_name,
-                        "document_id": kb_chunk.file_id,
-                        "chunk_index": kb_chunk.chunk_index,
-                        "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
-                        "content": kb_chunk.content,
-                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
-                    }
-                    all_kb_chunks.append(chunk_info)
-            
-            # Get the analysis for the entire document with all collected KB chunks
-            logger.info(f"Analyzing full document with {len(all_kb_chunks)} consolidated KB chunks")
+            # Get the analysis for the entire document with the consolidated KB chunks we created in Phase 1
+            logger.info(f"Analyzing full document with {len(consolidated_kb_chunks)} consolidated KB chunks")
             
             # Get the full document analysis with consolidated knowledge base chunks
             full_doc_analysis = await self.openai_service.analyze_document(
                 document_chunk=full_document_content,
-                knowledge_base_chunks=all_kb_chunks
+                knowledge_base_chunks=consolidated_kb_chunks
             )
             
             # Add metadata to the full document analysis
@@ -530,7 +463,54 @@ class DocumentAnalysisService:
                                 top_chunks.append(chunk)
                                 logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
                             
-                            return top_chunks
+                            # Now get adjacent chunks (one before and one after each top chunk)
+                            # This helps avoid truncated information due to chunk boundaries
+                            all_chunks = list(top_chunks)  # Make a copy of top chunks
+                            
+                            # Group chunks by file_id for efficient retrieval of adjacent chunks
+                            file_chunks = {}
+                            for chunk in top_chunks:
+                                if chunk.file_id not in file_chunks:
+                                    file_chunks[chunk.file_id] = []
+                                file_chunks[chunk.file_id].append(chunk.chunk_index)
+                            
+                            # For each file, get adjacent chunks
+                            for file_id, chunk_indexes in file_chunks.items():
+                                # Get ALL adjacent chunks in a single query for efficiency
+                                adjacent_indexes = set()
+                                for chunk_idx in chunk_indexes:
+                                    # Get one chunk before and one after
+                                    if chunk_idx > 0:  # Ensure we don't go below 0
+                                        adjacent_indexes.add(chunk_idx - 1)
+                                    adjacent_indexes.add(chunk_idx + 1)  # Next chunk
+                                
+                                # Remove indexes we already have
+                                adjacent_indexes = adjacent_indexes - set(chunk_indexes)
+                                
+                                if adjacent_indexes:
+                                    # Build a query to get all adjacent chunks at once
+                                    adjacent_conditions = []
+                                    for adj_idx in adjacent_indexes:
+                                        adjacent_conditions.append(
+                                            f"(file_id = {file_id} AND chunk_index = {adj_idx})"
+                                        )
+                                        
+                                    adjacent_query = f"""
+                                        SELECT kb.*
+                                        FROM knowledge_base kb
+                                        WHERE organization_id = :org_id AND ({" OR ".join(adjacent_conditions)})
+                                    """
+                                    
+                                    adj_result = await session.execute(text(adjacent_query), {"org_id": organization_id})
+                                    adjacent_chunks = adj_result.scalars().all()
+                                    
+                                    # Add adjacent chunks to our results
+                                    all_chunks.extend(adjacent_chunks)
+                            
+                            # Sort by file_id and chunk_index to maintain document order
+                            all_chunks.sort(key=lambda x: (x.file_id, x.chunk_index))
+                            
+                            return all_chunks
                     else:
                         # If embedding couldn't be created or is invalid,
                         # Fall back to getting the most recently added knowledge base chunks
@@ -553,83 +533,14 @@ class DocumentAnalysisService:
                     result = await session.execute(similarity_query)
                     top_chunks = result.scalars().all()
                 
-# This section is no longer needed as we've handled result processing in the vector search block
+                # We've optimized chunk retrieval in the main vector search block above
                 
                 if not top_chunks:
                     return []
                 
-                # Step 2: Collect file_ids and chunk_indexes from top results
-                # We'll use a dictionary to group by file_id for efficient lookup
-                final_chunks = []
-                seen_chunk_keys = set()  # To track chunks we've already included
-                chunks_to_fetch = []
-                
-                # Group top chunks by file_id and track their chunk_indexes
-                file_chunks = {}
-                for chunk in top_chunks:
-                    if chunk.file_id not in file_chunks:
-                        file_chunks[chunk.file_id] = []
-                    file_chunks[chunk.file_id].append(chunk.chunk_index)
-                    # Add the original chunks to our final list
-                    final_chunks.append(chunk)
-                    seen_chunk_keys.add(f"{chunk.file_id}_{chunk.chunk_index}")
-                
-                # Step 3: For each file, get adjacent chunks (2 before and 2 after each chunk)
-                for file_id, chunk_indexes in file_chunks.items():
-                    # For each chunk index, calculate the adjacent indexes we want
-                    for chunk_index in chunk_indexes:
-                        # Get up to 2 chunks before and 2 chunks after
-                        for adj_index in range(chunk_index - 2, chunk_index + 3):
-                            # Skip the original chunk (we already added it)
-                            if adj_index == chunk_index:
-                                continue
-                            
-                            # Skip if we've already seen this chunk
-                            chunk_key = f"{file_id}_{adj_index}"
-                            if chunk_key in seen_chunk_keys:
-                                continue
-                            
-                            # Only fetch valid indexes (non-negative)
-                            if adj_index >= 0:
-                                chunks_to_fetch.append((file_id, adj_index))
-                                seen_chunk_keys.add(chunk_key)
-                
-                # Step 4: Fetch all adjacent chunks in a single efficient query if there are any to fetch
-                if chunks_to_fetch:
-                    # Build conditions for OR query to get all adjacent chunks at once
-                    conditions = []
-                    for file_id, adj_index in chunks_to_fetch:
-                        conditions.append(
-                            and_(
-                                KnowledgeBase.file_id == file_id,
-                                KnowledgeBase.chunk_index == adj_index
-                            )
-                        )
-                    
-                    # Only execute the query if we have conditions
-                    if conditions:
-                        adjacent_query = select(KnowledgeBase).where(
-                            or_(*conditions),
-                            KnowledgeBase.organization_id == organization_id,
-                            KnowledgeBase.is_knowledge_base == True
-                        )
-                        
-                        result = await session.execute(adjacent_query)
-                        adjacent_chunks = result.scalars().all()
-                        
-                        # Add all adjacent chunks to our final list
-                        final_chunks.extend(adjacent_chunks)
-                
-                # Step 5: Sort the final chunks for better readability
-                # Sort first by file_id, then by chunk_index to maintain proper document order
-                final_chunks.sort(key=lambda x: (x.file_id, x.chunk_index))
-                
-                # Ensure we don't exceed the original limit
-                if len(final_chunks) > limit * 2:  # Allow slightly more for context
-                    logger.info(f"Trimming chunk count from {len(final_chunks)} to {limit * 2}")
-                    final_chunks = final_chunks[:limit * 2]
-                
-                return final_chunks
+                # Return the chunks from fallback methods (these use the ORM query which doesn't hit the optimized path)
+                # In the future, these could be optimized as well if needed
+                return top_chunks
                 
         except Exception as e:
             error_msg = f"Error finding relevant knowledge base chunks: {str(e)}"
