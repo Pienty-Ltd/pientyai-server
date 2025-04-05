@@ -87,41 +87,197 @@ class DocumentAnalysisService:
             
             logger.info(f"Processing {total_chunks} chunks for document {document_id}")
             
-            # Instead of processing document chunk by chunk, analyze the whole document at once
-            logger.info(f"Processing entire document with all {total_chunks} chunks")
+            # Process document chunk by chunk and also analyze the whole document
+            logger.info(f"Processing document in two phases: 1) Chunk-by-chunk analysis 2) Full document analysis")
+            
+            # Create a structure to store all analyses
+            all_analyses = []
+            chunk_kb_mapping = {}  # Store mapping between document chunks and their relevant KB chunks
+            
+            # PHASE 1: Process each chunk individually to capture detailed context
+            logger.info(f"Phase 1: Processing {total_chunks} chunks individually")
+            
+            for chunk_idx, doc_chunk in enumerate(document_chunks):
+                chunk_start_time = datetime.now()
+                chunk_content = doc_chunk.content
+                
+                logger.info(f"Finding relevant KB chunks for document chunk {chunk_idx+1}/{total_chunks}")
+                
+                # Find the most relevant chunks from the knowledge base for this specific chunk
+                chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+                    organization_id=organization_id,
+                    query_text=chunk_content,
+                    current_document_id=document_id,  # Exclude the current document from search
+                    limit=max_relevant_chunks  # Get context specific to this chunk
+                )
+                
+                # Save the mapping for later use
+                chunk_kb_mapping[chunk_idx] = chunk_relevant_kb
+                
+                # Skip analysis if no relevant KB chunks found
+                if not chunk_relevant_kb:
+                    logger.warning(f"No relevant KB chunks found for document chunk {chunk_idx}, skipping individual analysis")
+                    continue
+                
+                # Extract the content and add additional context from KB chunks for analysis
+                kb_chunk_content_list = []
+                
+                for kb_chunk in chunk_relevant_kb:
+                    # Add score info if available to help the AI understand relevance
+                    if hasattr(kb_chunk, 'similarity_score'):
+                        score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
+                    else:
+                        score_info = ""
+                    
+                    # Add document reference info
+                    from app.database.models.db_models import File
+                    file_name = "Unknown"
+                    try:
+                        async with async_session_maker() as session:
+                            file_query = select(File).where(File.id == kb_chunk.file_id)
+                            file_result = await session.execute(file_query)
+                            file = file_result.scalar_one_or_none()
+                            if file:
+                                file_name = file.filename
+                    except Exception as e:
+                        logger.error(f"Error retrieving filename: {str(e)}")
+                    
+                    # Add rich metadata to provide better context
+                    chunk_info = {
+                        "document_name": file_name,
+                        "document_id": kb_chunk.file_id,
+                        "chunk_index": kb_chunk.chunk_index,
+                        "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
+                        "content": kb_chunk.content,
+                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                    }
+                    kb_chunk_content_list.append(chunk_info)
+                
+                logger.info(f"Analyzing document chunk {chunk_idx+1}/{total_chunks} with {len(kb_chunk_content_list)} relevant KB chunks")
+                
+                # Get the analysis for this specific chunk with its relevant KB context
+                try:
+                    single_chunk_analysis = await self.openai_service.analyze_document(
+                        document_chunk=chunk_content,
+                        knowledge_base_chunks=kb_chunk_content_list
+                    )
+                    
+                    # Add chunk metadata to the analysis
+                    single_chunk_analysis["chunk_index"] = chunk_idx
+                    single_chunk_analysis["chunk_content"] = chunk_content
+                    single_chunk_analysis["processing_time_seconds"] = (datetime.now() - chunk_start_time).total_seconds()
+                    
+                    all_analyses.append(single_chunk_analysis)
+                    logger.info(f"Successfully analyzed document chunk {chunk_idx+1}/{total_chunks}")
+                    
+                except Exception as e:
+                    logger.error(f"Error analyzing document chunk {chunk_idx+1}: {str(e)}")
+            
+            # PHASE 2: Also analyze the entire document with consolidated KB chunks
+            # This gives a big-picture perspective that individual chunk analysis might miss
+            logger.info(f"Phase 2: Analyzing entire document with consolidated KB chunks")
             chunk_start_time = datetime.now()
             
             # Get the full document content (already combined at line 81)
             full_document_content = original_content
             
-            # Find the most relevant chunks from the knowledge base for the entire document
-            # This makes a single vector similarity search against the entire document content
-            relevant_kb_chunks = await self.find_relevant_knowledge_base_chunks(
-                organization_id=organization_id,
-                query_text=full_document_content,
-                current_document_id=document_id,  # Exclude the current document from search
-                limit=max_relevant_chunks * 2  # Get more context since we're analyzing the full document
-            )
+            # Consolidate all relevant KB chunks from individual analyses
+            all_kb_chunks = []
+            seen_kb_chunks = set()  # To avoid duplicates
             
-            # Extract the content and add additional context from KB chunks for analysis
-            kb_content_list = []
-            for kb_chunk in relevant_kb_chunks:
-                # Add score info if available to help the AI understand relevance
-                if hasattr(kb_chunk, 'similarity_score'):
-                    score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
-                else:
-                    score_info = ""
+            # First add all KB chunks from individual analyses
+            for chunk_kb in chunk_kb_mapping.values():
+                for kb_chunk in chunk_kb:
+                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                    if chunk_key not in seen_kb_chunks:
+                        seen_kb_chunks.add(chunk_key)
+                        
+                        # Add rich metadata as we did for individual chunks
+                        if hasattr(kb_chunk, 'similarity_score'):
+                            score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
+                        else:
+                            score_info = ""
+                        
+                        # Get file name
+                        file_name = "Unknown"
+                        try:
+                            async with async_session_maker() as session:
+                                file_query = select(File).where(File.id == kb_chunk.file_id)
+                                file_result = await session.execute(file_query)
+                                file = file_result.scalar_one_or_none()
+                                if file:
+                                    file_name = file.filename
+                        except Exception as e:
+                            logger.error(f"Error retrieving filename: {str(e)}")
+                            
+                        chunk_info = {
+                            "document_name": file_name,
+                            "document_id": kb_chunk.file_id,
+                            "chunk_index": kb_chunk.chunk_index,
+                            "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
+                            "content": kb_chunk.content,
+                            "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                        }
+                        all_kb_chunks.append(chunk_info)
+            
+            # As a fallback, if no KB chunks were found for individual chunks, find some for the whole document
+            if not all_kb_chunks:
+                logger.warning("No KB chunks found from individual chunk analysis, finding for entire document")
                 
-                # Add chunk metadata to provide context
-                chunk_info = f"Document: {kb_chunk.file_id}, Chunk: {kb_chunk.chunk_index}{score_info}"
-                formatted_content = f"--- {chunk_info} ---\n{kb_chunk.content}"
-                kb_content_list.append(formatted_content)
+                # Find the most relevant chunks from KB for the entire document as fallback
+                relevant_kb_chunks = await self.find_relevant_knowledge_base_chunks(
+                    organization_id=organization_id,
+                    query_text=full_document_content,
+                    current_document_id=document_id,
+                    limit=max_relevant_chunks * 2
+                )
+                
+                for kb_chunk in relevant_kb_chunks:
+                    if hasattr(kb_chunk, 'similarity_score'):
+                        score_info = f" [Similarity Score: {kb_chunk.similarity_score:.2f}]"
+                    else:
+                        score_info = ""
+                    
+                    # Get file name
+                    file_name = "Unknown"
+                    try:
+                        async with async_session_maker() as session:
+                            file_query = select(File).where(File.id == kb_chunk.file_id)
+                            file_result = await session.execute(file_query)
+                            file = file_result.scalar_one_or_none()
+                            if file:
+                                file_name = file.filename
+                    except Exception as e:
+                        logger.error(f"Error retrieving filename: {str(e)}")
+                        
+                    chunk_info = {
+                        "document_name": file_name,
+                        "document_id": kb_chunk.file_id,
+                        "chunk_index": kb_chunk.chunk_index,
+                        "similarity_score": getattr(kb_chunk, 'similarity_score', 0),
+                        "content": kb_chunk.content,
+                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                    }
+                    all_kb_chunks.append(chunk_info)
             
-            # Get the analysis for the entire document with context from relevant KB chunks
-            chunk_analysis = await self.openai_service.analyze_document(
+            # Get the analysis for the entire document with all collected KB chunks
+            logger.info(f"Analyzing full document with {len(all_kb_chunks)} consolidated KB chunks")
+            
+            # Get the full document analysis with consolidated knowledge base chunks
+            full_doc_analysis = await self.openai_service.analyze_document(
                 document_chunk=full_document_content,
-                knowledge_base_chunks=kb_content_list
+                knowledge_base_chunks=all_kb_chunks
             )
+            
+            # Add metadata to the full document analysis
+            full_doc_analysis["is_full_document_analysis"] = True
+            full_doc_analysis["processing_time_seconds"] = (datetime.now() - chunk_start_time).total_seconds()
+            
+            # Include both individual chunk analyses and the full document analysis
+            all_analyses.append(full_doc_analysis)
+            
+            # Use the full document analysis as our main chunk_analysis
+            chunk_analysis = full_doc_analysis
             
             # Check if the analysis contains an error
             if "error" in chunk_analysis:
@@ -947,88 +1103,118 @@ class DocumentAnalysisService:
         analysis_results: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Generate suggested changes for the document based on analysis results.
-        This method creates a structured representation of suggested changes
-        that can be used to show a "diff" between original and suggested content.
+        Generate suggested changes for the document based on the AI's analysis results.
+        This method uses the AI's recommendations and conflicts directly instead of 
+        trying to parse them with regex patterns.
         
-        Now enhanced to focus on specific legal and policy-based recommendations,
-        highlighting exact terms that need to be changed and providing concrete
-        suggestions for improvement.
+        The suggestions come directly from the AI model output, preserving the 
+        detailed analysis and making the changes more accurate.
         """
         try:
-            # Extract all recommendations from the analysis results
-            all_recommendations = []
-            for chunk in analysis_results:
-                if "recommendations" in chunk and isinstance(chunk["recommendations"], list):
-                    for rec in chunk["recommendations"]:
-                        if isinstance(rec, str) and rec not in all_recommendations:
-                            all_recommendations.append(rec)
-            
-            # Structure the suggestions with more detailed information
+            # Initialize the suggestions structure
             suggestions = {
-                "recommendations": all_recommendations,
+                "recommendations": [],
                 "sections": [],
                 "policy_conflicts": [],
                 "legal_compliance_issues": []
             }
             
-            # Go through each chunk and find parts that need specific changes
+            # Extract all original AI recommendations directly without filtering
             for chunk in analysis_results:
-                chunk_index = chunk.get("chunk_index", 0)
-                chunk_content = chunk.get("chunk_content", "")
-                conflicts = chunk.get("conflicts", [])
+                if "recommendations" in chunk and isinstance(chunk["recommendations"], list):
+                    # Add all recommendations directly from AI
+                    for rec in chunk["recommendations"]:
+                        if isinstance(rec, str) and rec not in suggestions["recommendations"]:
+                            suggestions["recommendations"].append(rec)
                 
-                if conflicts:
-                    # For each conflict, add a detailed suggested change section
-                    for conflict in conflicts:
-                        # Try to extract more specific information from the conflict text
-                        section_match = None
-                        rate_match = None
-                        policy_match = None
-                        
-                        # Example patterns to extract: "Section X.Y", "Z% rate", etc.
+                # Extract conflicts directly from AI output
+                if "conflicts" in chunk and isinstance(chunk["conflicts"], list):
+                    for conflict in chunk["conflicts"]:
+                        if not isinstance(conflict, str):
+                            continue
+                            
+                        # Try to identify section reference if present in the conflict description
                         import re
-                        section_pattern = r'([Ss]ection|[Mm]adde|[Bb]ölüm)\s+(\d+(\.\d+)?)'
-                        rate_pattern = r'(\d+(\.\d+)?)(\s*[%]|\s+yüzde|\s+faiz)'
-                        
+                        section_ref = "Unspecified section"
+                        section_pattern = r'([Ss][Ee][Cc][Tt][Ii][Oo][Nn]|[Mm][Aa][Dd][Dd][Ee]|[Bb][Öö][Ll][Üü][Mm])\s+(\d+(\.\d+)*)'
                         section_match = re.search(section_pattern, conflict)
-                        rate_match = re.search(rate_pattern, conflict)
                         
-                        section_info = f"Section {section_match.group(2)}" if section_match else "Unspecified section"
-                        rate_info = rate_match.group(1) if rate_match else None
+                        if section_match:
+                            section_type = section_match.group(1)  # "Section", "Madde", etc.
+                            section_num = section_match.group(2)   # "4.2", "3", etc.
+                            section_ref = f"{section_type} {section_num}"
                         
-                        # Create a more detailed suggested change
-                        suggested_improvement = "This section should be revised to align with company policies and legal requirements."
-                        if "faiz" in conflict.lower() or "interest" in conflict.lower() or rate_match:
-                            suggested_improvement = f"Update the interest rate to comply with company policy."
-                            if rate_info:
-                                suggested_improvement = f"Change the interest rate of {rate_info}% to match company policy."
+                        # Determine if this is related to policy or legal requirements
+                        # This is just classification, not changing the actual content
+                        is_policy_conflict = any(term in conflict.lower() for term in [
+                            "politika", "policy", "şirket", "company", "standart",
+                            "standard", "prosedür", "procedure", "kural", "rule"
+                        ])
                         
-                        # Check if this is a policy conflict
-                        is_policy_conflict = "politika" in conflict.lower() or "policy" in conflict.lower() or "şirket" in conflict.lower() or "company" in conflict.lower()
-                        is_legal_issue = "kanun" in conflict.lower() or "yasa" in conflict.lower() or "law" in conflict.lower() or "regulation" in conflict.lower() or "mevzuat" in conflict.lower()
+                        is_legal_issue = any(term in conflict.lower() for term in [
+                            "kanun", "yasa", "law", "regulation", "mevzuat", 
+                            "legal", "yasal", "anayasa", "constitution", "tüzük"
+                        ])
                         
+                        # Look for a corresponding recommendation for this conflict
+                        matching_recommendation = None
+                        for rec in suggestions["recommendations"]:
+                            # If the recommendation mentions similar terms as the conflict,
+                            # it's likely related
+                            if any(term in rec.lower() and term in conflict.lower() 
+                                  for term in ["faiz", "interest", "ödeme", "payment", 
+                                              "gün", "day", "mahkeme", "court", "ceza", 
+                                              "penalty", "süre", "period", "vade", "term"]):
+                                matching_recommendation = rec
+                                break
+                        
+                        # Add to sections with direct conflict and recommendation
                         change_section = {
-                            "chunk_index": chunk_index,
-                            "section": section_info,
-                            "original_text": chunk_content,
+                            "chunk_index": chunk.get("chunk_index", 0),
+                            "section": section_ref,
+                            "original_text": chunk.get("chunk_content", ""),
                             "conflict": conflict,
-                            "suggested_improvement": suggested_improvement,
+                            # Use the AI's recommendation directly if we found a match
+                            "suggested_improvement": matching_recommendation or conflict,
                             "is_policy_conflict": is_policy_conflict,
                             "is_legal_issue": is_legal_issue
                         }
                         
                         suggestions["sections"].append(change_section)
                         
-                        # Also add to the appropriate categorized list
-                        if is_policy_conflict:
+                        # Add to appropriate categorized lists
+                        if is_policy_conflict and conflict not in suggestions["policy_conflicts"]:
                             suggestions["policy_conflicts"].append(conflict)
-                        if is_legal_issue:
+                        if is_legal_issue and conflict not in suggestions["legal_compliance_issues"]:
                             suggestions["legal_compliance_issues"].append(conflict)
             
-            # Remove duplicates from categorized lists
-            suggestions["policy_conflicts"] = list(set(suggestions["policy_conflicts"]))
-            suggestions["legal_compliance_issues"] = list(set(suggestions["legal_compliance_issues"]))
+            # If no sections were found but we have recommendations, create sections from them
+            if not suggestions["sections"] and suggestions["recommendations"]:
+                for i, rec in enumerate(suggestions["recommendations"]):
+                    # Classify recommendation
+                    is_policy = any(term in rec.lower() for term in [
+                        "politika", "policy", "şirket", "company", "standart"
+                    ])
+                    is_legal = any(term in rec.lower() for term in [
+                        "kanun", "yasa", "law", "regulation", "mevzuat"
+                    ])
+                    
+                    # Create a section from the recommendation itself
+                    suggestions["sections"].append({
+                        "chunk_index": 0,
+                        "section": f"Recommendation {i+1}",
+                        "original_text": "",  # No specific text identified
+                        "conflict": rec,      # Use recommendation as conflict too
+                        "suggested_improvement": rec,
+                        "is_policy_conflict": is_policy,
+                        "is_legal_issue": is_legal
+                    })
+                    
+                    # Add to appropriate categorized lists if not already there
+                    if is_policy and rec not in suggestions["policy_conflicts"]:
+                        suggestions["policy_conflicts"].append(rec)
+                    if is_legal and rec not in suggestions["legal_compliance_issues"]:
+                        suggestions["legal_compliance_issues"].append(rec)
             
             return suggestions
             

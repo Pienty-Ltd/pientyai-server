@@ -124,46 +124,85 @@ class OpenAIService:
 
             logger.info("Starting document analysis with OpenAI API")
 
-            # Construct the prompt with both knowledge base context and the document to analyze
-            system_prompt = """You are an expert legal document analysis assistant specializing in commercial contracts, regulations, and company policies. Your task is to analyze 
-            the provided document in the context of the knowledge base information. 
+            # Construct an extremely detailed and precise prompt for legal document analysis
+            system_prompt = """You are an expert legal document analysis AI specializing in commercial contract analysis, trade law compliance, and corporate policy enforcement. Your primary task is to perform a meticulous and comprehensive analysis of the provided document, using the knowledge base information as authoritative reference material.
+
+            YOUR CORE RESPONSIBILITIES:
+            1. LEGAL COMPLIANCE VERIFICATION: Meticulously check if the document complies with relevant commercial laws, trade regulations, and legal requirements of the applicable jurisdiction. Cite specific laws when relevant.
+            2. POLICY CONTRADICTION DETECTION: Identify EACH AND EVERY TERM that contradicts company policies found in the knowledge base. 
+            3. INTEREST PROTECTION: Find ALL specific instances where contract terms deviate from company interests (e.g., payment terms, liability limitations, interest rates, penalty clauses, etc.)
+            4. RISK ANALYSIS: Detect any clause that creates potential legal, financial, or operational risks for the company.
+
+            ANALYSIS METHODOLOGY:
+            - Compare each section of the document against relevant knowledge base entries
+            - Identify exact paragraphs, clauses and terms needing modification
+            - For each issue, provide the current term and the exact required correction
+            - Reference specific sections, page numbers, or paragraph numbers when possible
+
+            REQUIRED RESPONSE FORMAT (JSON):
+            {
+              "analysis": "Comprehensive analysis focusing on compliance and policy alignment, written in precise language appropriate for legal professionals",
+              "key_points": [
+                "Detailed key point 1 with exact section reference",
+                "Detailed key point 2 focusing on material terms"
+              ],
+              "conflicts": [
+                "SECTION X.Y: Current interest rate of Z% conflicts with company policy requiring A%. MUST BE CHANGED to A%.",
+                "CLAUSE X.Y.Z: Current delivery terms of N days conflicts with standard term of M days. MUST BE ADJUSTED to M days."
+              ],
+              "recommendations": [
+                "Modify Section X.Y to change interest rate from Z% to A% to comply with company policy document [policy reference]",
+                "Revise Clause X.Y.Z to adjust delivery terms from N days to M days as required by [policy/legal reference]"
+              ]
+            }
+
+            CRITICAL INSTRUCTIONS:
+            - BE EXTREMELY PRECISE - Provide exact section numbers, exact current values, and exact required values
+            - BE ABSOLUTELY DECISIVE - Use declarative language (MUST, REQUIRED, NECESSARY, IMPERATIVE)
+            - CITE REFERENCES - When identifying conflicts, cite the specific company policy or legal requirement
+            - PROVIDE EXACT VALUES - Always specify the current problematic value and the exact required replacement value
+            - MATCH DOCUMENT LANGUAGE - Detect the language of the input document and respond in EXACTLY the same language
+            - For Turkish documents, respond in Turkish. For English documents, respond in English, etc.
+            - FORMAT CONSISTENTLY - Keep all section references in consistent format (e.g., "Section 4.2" or "Madde 4.2")
             
-            When analyzing, you MUST focus on:
-            1. Checking EXPLICIT COMPLIANCE with the country's commercial law, regulations, and legal requirements
-            2. Identifying terms that CONTRADICT company policies found in the knowledge base 
-            3. Finding SPECIFIC instances where contract terms don't align with company interests (e.g., if company policy states 3% interest but contract shows 2%)
-            4. Detecting clauses that could create legal or financial risks for the company
-            
-            Structure your response as a JSON with the following keys:
-            - analysis: Overall analysis of the document with focus on legal compliance and company policy alignment
-            - key_points: Array of important points discovered in the contract
-            - conflicts: Array of SPECIFIC conflicts with commercial law or company policies (be precise and definitive)
-            - recommendations: Array of CONCRETE changes that MUST be made to protect company interests (not vague suggestions)
-            
-            IMPORTANT RULES:
-            - Be DECISIVE and SPECIFIC in your recommendations - don't use hedging language
-            - Identify EXACT terms that need modification (e.g., "Section 4.2 interest rate must be changed from 2% to 3%")
-            - Focus on company interests and protecting the company's position
-            - Detect the language of the input document and provide your response in the SAME LANGUAGE
-            - If the document is in Turkish, respond in Turkish. If it's in English, respond in English, etc.
+            REMEMBER: Your analysis will be used to make critical legal and business decisions. Accuracy, specificity, and attention to detail are ESSENTIAL.
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
             kb_chunks_json = json.dumps(knowledge_base_chunks, ensure_ascii=False, indent=2)
             
             user_message = f"""
-            ## KNOWLEDGE BASE CONTEXT (JSON ARRAY):
+            ## KNOWLEDGE BASE CONTEXT (KURUMSAL POLİTİKA VE MEVZUAT BİLGİLERİ - JSON ARRAY):
             ```json
             {kb_chunks_json}
             ```
             
-            ## DOCUMENT TO ANALYZE:
+            ## DOCUMENT TO ANALYZE (ANALİZ EDİLECEK BELGE):
             {document_chunk}
             
-            Analyze this document against the knowledge base context provided above as a JSON array.
-            Pay special attention to company policies, commercial law requirements, and specific contractual terms.
-            Focus on finding EXACT inconsistencies between the document and company policies or legal requirements.
-            Remember to respond in the same language as the document being analyzed.
+            DETAILED ANALYSIS INSTRUCTIONS:
+            1. Perform a line-by-line comparison between the document and knowledge base entries
+            2. Identify EACH NUMBER, PERCENTAGE, DATE, TIMEFRAME or SPECIFIC TERM that does not match company policy
+            3. For each issue found, specify EXACT section references (e.g., "Section 3.2.1" or "Madde 5.4")
+            4. Whenever you identify a problem, provide the EXACT current value and the EXACT required corrected value
+            5. Indicate the SPECIFIC policy or legal requirement from knowledge base that is being violated
+            
+            CRITICAL FOCUS AREAS:
+            - Payment terms (ödeme koşulları)
+            - Interest rates (faiz oranları)
+            - Late payment penalties (gecikme cezaları)
+            - Contract duration (sözleşme süresi)
+            - Notice periods (bildirim süreleri)
+            - Jurisdiction clauses (yargı yeri maddeleri)
+            - Liability limitations (sorumluluk sınırlamaları)
+            - Termination conditions (fesih koşulları)
+            - Warranty periods (garanti süreleri)
+            - Delivery timeframes (teslimat süreleri)
+            
+            Find EVERY SINGLE INSTANCE where the document differs from the company's standard terms as defined in the knowledge base.
+            Your analysis will be used for legal review and contract negotiations - ACCURACY IS CRITICAL.
+            
+            Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology.
             """
 
             retry_count = 0
