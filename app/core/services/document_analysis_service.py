@@ -509,12 +509,32 @@ class DocumentAnalysisService:
                     # Return empty list so document analysis can continue without vector search
                     return []
             else:
-                # Use the provided embedding, but handle nested list case
-                if isinstance(query_embedding, list) and len(query_embedding) > 0 and isinstance(query_embedding[0], list):
-                    query_embedding = query_embedding[0]  # Extract from nested list
-                    logger.debug(f"Extracted provided embedding from nested list structure")
-                
-                logger.debug(f"Using provided embedding of length {len(query_embedding)}")
+                # Use the provided embedding, but ensure it's in the right format
+                # Handle all possible embedding formats and normalize them to a flat list
+                if isinstance(query_embedding, list):
+                    # Handle nested list case where embedding is wrapped in outer lists
+                    if len(query_embedding) > 0 and isinstance(query_embedding[0], list):
+                        # This is a nested list like [[0.1, 0.2, ...]], extract the inner list
+                        query_embedding = query_embedding[0]
+                        logger.debug(f"Extracted embedding from nested list structure")
+                    
+                    # Now the embedding should be a flat list of floats
+                    # Ensure all values are numeric to avoid pgvector errors
+                    try:
+                        # Make sure all values are floats (this will raise an error if any value can't be converted)
+                        query_embedding = [float(val) for val in query_embedding]
+                        logger.debug(f"Verified embedding has correct numeric format")
+                    except Exception as e:
+                        logger.error(f"Error converting embedding values to float: {str(e)}")
+                        # If we can't convert, create a new empty list (will fall back to recent chunks)
+                        query_embedding = []
+                        
+                    if query_embedding:
+                        logger.debug(f"Using provided embedding of length {len(query_embedding)}")
+                else:
+                    logger.warning(f"Provided embedding is not a list, type: {type(query_embedding)}")
+                    # Create an empty list to trigger fallback mechanism
+                    query_embedding = []
                 
             async with async_session_maker() as session:
                 # Step 1: First get the most relevant chunks based on vector similarity
@@ -555,12 +575,12 @@ class DocumentAnalysisService:
                         where_clause = " AND ".join(conditions)
                         
                         # Build complete SQL query using native pgvector operator
-                        # 1 - (embedding <=> :query_vector) gives us similarity score between 0-1
-                        # Use the <=> operator directly with query_vector parameter
+                        # 1 - (embedding <=> :query_vector::vector) gives us similarity score between 0-1
+                        # Use the <=> operator with explicit type cast to vector to ensure proper parsing
                         sql_query = f"""
                             SELECT 
                                 kb.*,
-                                1 - (embedding <=> :query_vector) AS similarity_score
+                                1 - (embedding <=> :query_vector::vector) AS similarity_score
                             FROM 
                                 knowledge_base kb
                             WHERE 
@@ -571,11 +591,22 @@ class DocumentAnalysisService:
                         """
                         
                         # Parameters for the query
-                        # Pass embedding directly to pgvector as is
-                        # The embedding should already be in the correct format as stored in the database (flat array of floats)
+                        # Format the embedding as a string representation of the array
+                        # PostgreSQL pgvector extension expects embeddings in string array format: '[val1, val2, ...]'
+                        # Let's ensure the embedding is properly formatted for pgvector
+                        # Use document_service helper to consistently format embeddings for pgvector
+                        if isinstance(query_embedding, list):
+                            # Format embedding using the helper method
+                            embedding_string = self.document_service.format_embedding_for_pgvector(query_embedding)
+                            logger.debug(f"Formatted embedding for pgvector: {embedding_string[:30]}...")
+                        else:
+                            # If query_embedding is already a string, ensure it's properly formatted
+                            embedding_string = query_embedding if isinstance(query_embedding, str) else str(query_embedding)
+                            logger.debug(f"Using provided embedding string: {embedding_string[:30]}...")
+                        
                         params = {
                             "org_id": organization_id,
-                            "query_vector": query_embedding,
+                            "query_vector": embedding_string,
                             "limit": initial_limit
                         }
                         

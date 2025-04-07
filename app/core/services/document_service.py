@@ -28,6 +28,19 @@ class DocumentService:
         self._s3_client = None
         self.bucket_name = config.AWS_BUCKET_NAME
         self.openai_service = OpenAIService()
+        
+    def format_embedding_for_pgvector(self, embedding: List[float]) -> str:
+        """
+        Format an embedding vector as a properly formatted string for pgvector operations
+        
+        Args:
+            embedding: The embedding vector to format
+            
+        Returns:
+            A string representation of the embedding ready for pgvector
+        """
+        # Remove spaces to ensure proper pgvector parsing
+        return str(embedding).replace(' ', '')
 
     @property
     def s3_client(self):
@@ -422,6 +435,11 @@ class DocumentService:
                 # This performs pagination and counting in a single query
                 search_start = datetime.now()
                 
+                # Format embedding for PostgreSQL
+                # Convert the embedding array to a properly formatted string for pgvector
+                embedding_string = str(query_embedding[0]).replace(' ', '')
+                logger.debug(f"Using embedding string: {embedding_string[:30]}...")
+                
                 query_sql = text("""
                     WITH ranked_results AS (
                         SELECT 
@@ -442,7 +460,7 @@ class DocumentService:
                 result = await session.execute(
                     query_sql, 
                     {
-                        "query_embedding": query_embedding[0],
+                        "query_embedding": embedding_string,
                         "org_id": organization_id,
                         "offset": offset,
                         "offset_end": offset + per_page
@@ -1178,10 +1196,14 @@ class DocumentService:
                     ORDER BY row_num
                 """)
                 
+                # Format embedding for PostgreSQL vector operations
+                embedding_string = self.format_embedding_for_pgvector(query_embedding[0])
+                logger.debug(f"Formatted embedding for pgvector: {embedding_string[:30]}...")
+                
                 result = await session.execute(
                     query_sql, 
                     {
-                        "query_embedding": query_embedding[0],
+                        "query_embedding": embedding_string,
                         "document_id": document_id,
                         "offset": offset,
                         "offset_end": offset + per_page
