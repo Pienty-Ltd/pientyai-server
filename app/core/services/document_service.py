@@ -39,8 +39,19 @@ class DocumentService:
         Returns:
             A string representation of the embedding ready for pgvector
         """
-        # Remove spaces to ensure proper pgvector parsing
-        return str(embedding).replace(' ', '')
+        # Ensure embedding is a flat list of floats
+        if isinstance(embedding, list):
+            # If it's a nested list, extract the inner list
+            if len(embedding) > 0 and isinstance(embedding[0], list):
+                embedding = embedding[0]
+            
+            # Ensure all values are floats
+            embedding = [float(val) for val in embedding]
+        
+        # Format as a proper PostgreSQL array string: [0.1,0.2,0.3,...]
+        # The format must be exact: square brackets, no spaces, comma separated
+        vector_str = "[" + ",".join(str(val) for val in embedding) + "]"
+        return vector_str
 
     @property
     def s3_client(self):

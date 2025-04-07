@@ -585,6 +585,7 @@ class DocumentAnalysisService:
                                 knowledge_base kb
                             WHERE 
                                 {where_clause}
+                                AND embedding IS NOT NULL
                             ORDER BY 
                                 similarity_score DESC
                             LIMIT :limit
@@ -592,17 +593,20 @@ class DocumentAnalysisService:
                         
                         # Parameters for the query
                         # Format the embedding as a string representation of the array
-                        # PostgreSQL pgvector extension expects embeddings in string array format: '[val1, val2, ...]'
+                        # PostgreSQL pgvector extension expects embeddings in string array format: '[val1,val2,...]'
                         # Let's ensure the embedding is properly formatted for pgvector
-                        # Use document_service helper to consistently format embeddings for pgvector
-                        if isinstance(query_embedding, list):
+                        try:
                             # Format embedding using the helper method
                             embedding_string = self.document_service.format_embedding_for_pgvector(query_embedding)
-                            logger.debug(f"Formatted embedding for pgvector: {embedding_string[:30]}...")
-                        else:
-                            # If query_embedding is already a string, ensure it's properly formatted
-                            embedding_string = query_embedding if isinstance(query_embedding, str) else str(query_embedding)
-                            logger.debug(f"Using provided embedding string: {embedding_string[:30]}...")
+                            if embedding_string and len(embedding_string) > 30:
+                                logger.debug(f"Formatted embedding for pgvector: {embedding_string[:30]}...")
+                            else:
+                                logger.warning(f"Possibly malformed embedding string: {embedding_string}")
+                        except Exception as e:
+                            logger.error(f"Error formatting embedding: {str(e)}")
+                            # Create a fallback empty array string that will be valid for PostgreSQL
+                            embedding_string = "[]"
+                            logger.warning("Using empty embedding due to formatting error")
                         
                         params = {
                             "org_id": organization_id,
@@ -702,8 +706,27 @@ class DocumentAnalysisService:
                         result = await session.execute(similarity_query)
                         top_chunks = result.scalars().all()
                 except Exception as e:
-                    # If vector search fails, get the most recent chunks
-                    logger.error(f"Vector search failed: {str(e)}, falling back to recent chunks")
+                    # If vector search fails, log detailed error information and fall back
+                    error_details = str(e)
+                    
+                    # Try to extract more detailed error information for PostgreSQL/pgvector errors
+                    if hasattr(e, '__cause__') and e.__cause__ is not None:
+                        error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+                        if hasattr(e.__cause__, '__cause__') and e.__cause__.__cause__ is not None:
+                            error_details = f"{error_details} | Root cause: {str(e.__cause__.__cause__)}"
+                    
+                    # Check for common PostgreSQL error types
+                    if 'asyncpg.exceptions.DataError' in error_details:
+                        logger.error(f"PostgreSQL vector operation failed: {error_details}")
+                        logger.error("This is likely due to an issue with the embedding format or vector comparison")
+                    elif 'asyncpg.exceptions.UndefinedFunctionError' in error_details and '<=> operator' in error_details:
+                        logger.error(f"The pgvector extension might not be properly installed: {error_details}")
+                    elif 'asyncpg.exceptions' in error_details:
+                        logger.error(f"PostgreSQL error in vector search: {error_details}")
+                    
+                    logger.error(f"Vector search failed: {error_details}, falling back to recent chunks")
+                    
+                    # Fall back to a simpler query that doesn't use vector operations
                     similarity_query = base_query.order_by(
                         KnowledgeBase.created_at.desc()
                     ).limit(initial_limit)
