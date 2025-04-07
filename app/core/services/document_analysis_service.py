@@ -111,11 +111,13 @@ class DocumentAnalysisService:
                 logger.info(f"Finding relevant KB chunks for chunk {chunk_idx+1}/{total_chunks}")
                 
                 # Find the most relevant chunks from the knowledge base for this specific chunk
+                # Use the document chunk's existing embedding if available
                 chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                     organization_id=organization_id,
                     query_text=chunk_content,
                     current_document_id=document_id,  # Exclude the current document from search
-                    limit=max_relevant_chunks  # Get context specific to this chunk
+                    limit=max_relevant_chunks,  # Get context specific to this chunk
+                    query_embedding=doc_chunk.embedding if hasattr(doc_chunk, 'embedding') and doc_chunk.embedding else None
                 )
                 
                 # Add all relevant chunks to our global set, tracking by file_id and chunk_index
@@ -162,11 +164,20 @@ class DocumentAnalysisService:
             
             # Also search using the full document text to catch overall context
             logger.info(f"Finding additional KB chunks using the full document content")
+            
+            # Prepare embedding for the full document if any document chunks have embeddings
+            full_doc_embedding = None
+            # Simple approach: Use the first document chunk's embedding if available
+            if document_chunks and hasattr(document_chunks[0], 'embedding') and document_chunks[0].embedding:
+                full_doc_embedding = document_chunks[0].embedding
+                logger.info(f"Using existing embedding from document chunks for full document analysis")
+            
             full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                 organization_id=organization_id,
                 query_text=full_document_content,
                 current_document_id=document_id,
-                limit=max_relevant_chunks * 2  # Get more chunks for the full document
+                limit=max_relevant_chunks * 2,  # Get more chunks for the full document
+                query_embedding=full_doc_embedding
             )
             
             # Add these to our set of unique chunks as well along with their adjacent context
@@ -437,7 +448,8 @@ class DocumentAnalysisService:
         organization_id: int,
         query_text: str,
         current_document_id: Optional[int] = None,
-        limit: int = 5
+        limit: int = 5,
+        query_embedding: Optional[List[float]] = None
     ) -> List[KnowledgeBase]:
         """
         Find the most relevant knowledge base chunks for a query text
@@ -451,6 +463,8 @@ class DocumentAnalysisService:
             query_text: Text to search for (usually a chunk from the document to analyze)
             current_document_id: Optional ID of the current document to exclude from results
             limit: Maximum number of chunks to return (between 3 and 10)
+            query_embedding: Optional pre-generated embedding vector for the query text.
+                            If provided, skips embedding generation to improve performance.
             
         Returns:
             List of relevant knowledge base chunks including adjacent chunks for better context
@@ -461,20 +475,26 @@ class DocumentAnalysisService:
         elif limit > 10:
             limit = 10
         try:
-            # Generate embedding for the query text
-            try:
-                query_embedding = await self.openai_service.create_embeddings([query_text])
-                if not query_embedding or len(query_embedding) == 0:
-                    logger.error("Failed to generate embedding for query text")
+            # Use provided embedding if available, otherwise generate a new one
+            if query_embedding is None:
+                # Generate embedding for the query text
+                try:
+                    query_embedding_result = await self.openai_service.create_embeddings([query_text])
+                    if not query_embedding_result or len(query_embedding_result) == 0:
+                        logger.error("Failed to generate embedding for query text")
+                        return []
+                    query_embedding = query_embedding_result[0]
+                except Exception as e:
+                    error_details = str(e)
+                    if hasattr(e, '__cause__') and e.__cause__ is not None:
+                        error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+                    
+                    logger.error(f"Error generating embedding for query text: {error_details}")
+                    # Return empty list so document analysis can continue without vector search
                     return []
-            except Exception as e:
-                error_details = str(e)
-                if hasattr(e, '__cause__') and e.__cause__ is not None:
-                    error_details = f"{error_details} | Cause: {str(e.__cause__)}"
-                
-                logger.error(f"Error generating embedding for query text: {error_details}")
-                # Return empty list so document analysis can continue without vector search
-                return []
+            else:
+                # Use the provided embedding
+                logger.debug(f"Using provided embedding of length {len(query_embedding)}")
                 
             async with async_session_maker() as session:
                 # Step 1: First get the most relevant chunks based on vector similarity
@@ -497,9 +517,9 @@ class DocumentAnalysisService:
                 
                 try:
                     # Native pgvector similarity search with cosine distance
-                    if query_embedding and len(query_embedding) > 0 and len(query_embedding[0]) > 0:
+                    if query_embedding and len(query_embedding) > 0:
                         # Using PostgreSQL's native vector operations with direct SQL execution for better performance
-                        logger.debug(f"Running pgvector search with embedding length: {len(query_embedding[0])}")
+                        logger.debug(f"Running pgvector search with embedding length: {len(query_embedding)}")
                         
                         # Create base query conditions
                         conditions = [
@@ -532,7 +552,7 @@ class DocumentAnalysisService:
                         # Parameters for the query
                         params = {
                             "org_id": organization_id,
-                            "query_vector": query_embedding[0],
+                            "query_vector": query_embedding,
                             "limit": initial_limit
                         }
                         
