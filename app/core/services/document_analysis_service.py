@@ -520,21 +520,27 @@ class DocumentAnalysisService:
                             rows = result.fetchall()
                             
                             # Convert row results to KnowledgeBase objects with similarity scores
-                            top_chunks = []
+                            chunks_with_similarity = []
                             for row in rows:
                                 # Get KnowledgeBase object from row mapping
                                 chunk = row[0]  # The first column contains the entire KnowledgeBase object
                                 similarity = float(row[1])  # The last column is our similarity score
                                 
-                                # Only include chunks with similarity > 0.5 (50%)
-                                # This is the first filter - we need to make sure the initial chunks from vector search exceed our threshold
-                                if similarity >= 0.5:  # Only accept chunks with at least 50% similarity
-                                    # Attach similarity score to the object
-                                    setattr(chunk, 'similarity_score', similarity)
-                                    top_chunks.append(chunk)
-                                    logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
-                                else:
-                                    logger.debug(f"Skipped low similarity chunk {chunk.chunk_index} (score: {similarity:.4f})")
+                                # Attach similarity score to the object and collect all chunks
+                                # We'll select the top 2 chunks later regardless of similarity score
+                                setattr(chunk, 'similarity_score', similarity)
+                                chunks_with_similarity.append((chunk, similarity))
+                                logger.debug(f"Retrieved chunk {chunk.chunk_index} with similarity {similarity:.4f}")
+                            
+                            # Sort chunks by similarity score (highest first)
+                            chunks_with_similarity.sort(key=lambda x: x[1], reverse=True)
+                            
+                            # Get the top 2 chunks with highest similarity score (or all if less than 2)
+                            top_limit = min(2, len(chunks_with_similarity))
+                            top_chunks = [chunk_data[0] for chunk_data in chunks_with_similarity[:top_limit]]
+                            
+                            if top_chunks:
+                                logger.info(f"Selected top {len(top_chunks)} chunks, highest score: {chunks_with_similarity[0][1]:.4f}")
                             
                             # Now get adjacent chunks (one before and one after each top chunk)
                             # This helps avoid truncated information due to chunk boundaries
