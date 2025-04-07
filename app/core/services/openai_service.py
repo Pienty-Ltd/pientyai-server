@@ -1,11 +1,13 @@
 import os
 import asyncio
 import time
-from typing import List, Optional, Dict, Any
+import tempfile
+import json
+import uuid
+from typing import List, Optional, Dict, Any, Tuple
 from openai import OpenAI
 from app.core.config import config
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,8 @@ class OpenAIService:
     BATCH_API_MAX_SIZE = 2000  # Maximum number of texts to process in one batch API call
     MAX_RETRIES = 3  # Maximum number of retries for failed API calls
     RETRY_DELAY = 1  # Delay between retries in seconds
+    BATCH_CHECK_INTERVAL = 30  # Time in seconds to wait between batch status checks
+    BATCH_MAX_WAIT_TIME = 24 * 60 * 60  # Maximum time (24 hours) to wait for a batch to complete
 
     def __init__(self):
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -102,13 +106,10 @@ class OpenAIService:
     async def create_batch_embeddings(self, text_chunks: List[str]) -> List[List[float]]:
         """
         Create embeddings for a list of text chunks using OpenAI's API
-        This method handles large volumes of text chunks in a single batch request
-        rather than splitting into smaller batches and making multiple API calls.
+        This method handles large volumes of text chunks in a batch request.
         
-        For small batches, this uses the standard embeddings API.
-        For very large batches, it would be more efficient to use OpenAI's true Batch API 
-        with the two-step process (create a batch job, then retrieve results), but
-        this implementation uses the standard API for simplicity and immediate results.
+        For very large datasets (>10,000 items), consider using create_async_batch_embeddings() 
+        which uses OpenAI's true asynchronous Batch API.
         
         Args:
             text_chunks: List of text chunks to convert to embeddings
@@ -178,6 +179,172 @@ class OpenAIService:
             logger.error(f"Error creating embeddings: {str(e)}")
             raise
 
+    async def create_async_batch_embeddings(self, text_chunks: List[str]) -> List[List[float]]:
+        """
+        Create embeddings for a list of text chunks using OpenAI's true asynchronous Batch API
+        This method follows the two-step process for Batch API:
+        1. Create a batch job with the input file
+        2. Wait for the job to complete and retrieve the results
+        
+        This is optimal for very large datasets (>10,000 items) where immediate response is not required.
+        The batch will be processed asynchronously and will complete within 24 hours (often much faster).
+        
+        Args:
+            text_chunks: List of text chunks to convert to embeddings
+            
+        Returns:
+            List of embedding vectors, one for each input text chunk
+        """
+        if not text_chunks:
+            logger.warning("Empty text chunks provided to create_async_batch_embeddings")
+            return []
+            
+        # If the batch is small enough, use the synchronous method instead
+        if len(text_chunks) <= self.BATCH_SIZE * 5:  # Use batch API only for significant workloads
+            logger.info(f"Input size ({len(text_chunks)}) is small, using standard batch method instead of async batch API")
+            return await self.create_batch_embeddings(text_chunks)
+        
+        try:
+            # Step 1: Prepare input file for batch processing
+            logger.info(f"Preparing async batch embedding request for {len(text_chunks)} chunks")
+            
+            # Create a temp file to hold the batch input data
+            batch_id = str(uuid.uuid4())
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as batch_file:
+                batch_file_path = batch_file.name
+                
+                # Create a JSONL file with each line containing a request for embeddings
+                for i, chunk in enumerate(text_chunks):
+                    # Create a proper batch API request entry for each chunk
+                    entry = {
+                        "custom_id": f"chunk_{i}",
+                        "method": "POST",
+                        "url": "/v1/embeddings",
+                        "body": {
+                            "model": "text-embedding-ada-002",
+                            "input": chunk
+                        }
+                    }
+                    batch_file.write(json.dumps(entry) + '\n')
+                
+            logger.info(f"Created batch input file at {batch_file_path} with {len(text_chunks)} entries")
+            
+            # Step 2: Upload the file for batch processing
+            try:
+                logger.info("Uploading batch input file to OpenAI")
+                batch_file_obj = await asyncio.to_thread(
+                    self.client.files.create,
+                    file=open(batch_file_path, "rb"),
+                    purpose="batch"
+                )
+                batch_file_id = batch_file_obj.id
+                logger.info(f"Successfully uploaded batch file with ID: {batch_file_id}")
+                
+                # Step 3: Create the batch job
+                logger.info("Creating batch embedding job")
+                batch_job = await asyncio.to_thread(
+                    self.client.batches.create,
+                    input_file_id=batch_file_id,
+                    endpoint="/v1/embeddings",
+                    completion_window="24h"
+                )
+                
+                batch_id = batch_job.id
+                logger.info(f"Created batch job with ID: {batch_id}, current status: {batch_job.status}")
+                
+                # Step 4: Poll for batch completion
+                start_time = time.time()
+                while time.time() - start_time < self.BATCH_MAX_WAIT_TIME:
+                    batch_status = await asyncio.to_thread(
+                        self.client.batches.retrieve,
+                        batch_id
+                    )
+                    
+                    current_status = batch_status.status
+                    logger.info(f"Batch job {batch_id} status: {current_status}")
+                    
+                    if current_status == "completed":
+                        # Job completed, retrieve results
+                        logger.info(f"Batch job {batch_id} completed, retrieving results")
+                        output_file_id = batch_status.output_file_id
+                        
+                        if not output_file_id:
+                            raise Exception(f"Batch job completed but no output file ID was provided")
+                        
+                        # Download the results file
+                        file_response = await asyncio.to_thread(
+                            self.client.files.content,
+                            output_file_id
+                        )
+                        result_content = file_response.text
+                        
+                        # Parse the results
+                        embeddings_by_chunk_id = {}
+                        for line in result_content.splitlines():
+                            result = json.loads(line)
+                            custom_id = result.get("custom_id")
+                            response_data = result.get("response", {}).get("body", {})
+                            
+                            # Extract chunk index from custom_id
+                            chunk_idx = int(custom_id.split("_")[1]) if custom_id.startswith("chunk_") else -1
+                            
+                            # Extract embedding from response
+                            if response_data and "data" in response_data:
+                                embedding = response_data["data"][0]["embedding"]
+                                embeddings_by_chunk_id[chunk_idx] = embedding
+                        
+                        # Reconstruct ordered list of embeddings
+                        all_embeddings = []
+                        for i in range(len(text_chunks)):
+                            if i in embeddings_by_chunk_id:
+                                all_embeddings.append(embeddings_by_chunk_id[i])
+                            else:
+                                logger.warning(f"Missing embedding for chunk {i}, will create it individually")
+                                # Create missing embedding individually
+                                individual_embedding = await self.create_embeddings([text_chunks[i]])
+                                all_embeddings.append(individual_embedding[0])
+                        
+                        logger.info(f"Successfully processed batch embeddings for {len(all_embeddings)} chunks")
+                        return all_embeddings
+                    
+                    elif current_status in ["failed", "expired", "cancelled"]:
+                        error_file_id = batch_status.error_file_id
+                        error_msg = f"Batch job {batch_id} failed with status {current_status}"
+                        
+                        if error_file_id:
+                            # Download error file to get details
+                            error_response = await asyncio.to_thread(
+                                self.client.files.content,
+                                error_file_id
+                            )
+                            error_content = error_response.text
+                            error_msg += f", errors: {error_content}"
+                        
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    
+                    # Job still in progress, wait before checking again
+                    await asyncio.sleep(self.BATCH_CHECK_INTERVAL)
+                
+                # Time limit exceeded
+                raise Exception(f"Batch job {batch_id} timed out after {self.BATCH_MAX_WAIT_TIME} seconds")
+                
+            finally:
+                # Clean up the temp file
+                try:
+                    os.unlink(batch_file_path)
+                    logger.debug(f"Removed temporary batch file: {batch_file_path}")
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to clean up temporary batch file: {str(cleanup_err)}")
+        
+        except Exception as e:
+            logger.error(f"Error in async batch embeddings process: {str(e)}")
+            logger.info("Falling back to standard batch embedding method")
+            
+            # Fallback to standard batch processing
+            return await self.create_batch_embeddings(text_chunks)
+    
     async def analyze_document(self,
                                document_chunk: str,
                                knowledge_base_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:

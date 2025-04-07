@@ -154,9 +154,13 @@ class DocumentService:
                     # Process all chunks at once using OpenAI's batch API
                     batch_start = datetime.now()
                     
-                    # Use the new batch API method to get embeddings for all chunks at once
-                    logger.info(f"Generating embeddings for all {total_chunks} chunks in a single batch API call")
-                    embeddings = await self.openai_service.create_batch_embeddings(text_chunks)
+                    # Use appropriate embedding method based on chunk count
+                    if total_chunks > 10000:  # For very large documents, use async batch API
+                        logger.info(f"Document has {total_chunks} chunks, using asynchronous batch API for efficiency")
+                        embeddings = await self.openai_service.create_async_batch_embeddings(text_chunks)
+                    else:  # For regular sized documents, use standard batch API
+                        logger.info(f"Generating embeddings for all {total_chunks} chunks in a single batch API call")
+                        embeddings = await self.openai_service.create_batch_embeddings(text_chunks)
                     
                     embedding_duration = (datetime.now() - batch_start).total_seconds()
                     logger.info(f"Generated embeddings for all {len(embeddings)} chunks (Duration: {embedding_duration}s)")
