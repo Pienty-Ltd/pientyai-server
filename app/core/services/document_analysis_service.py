@@ -112,12 +112,21 @@ class DocumentAnalysisService:
                 
                 # Find the most relevant chunks from the knowledge base for this specific chunk
                 # Use the document chunk's existing embedding if available
+                # Ensure we flatten the embedding array if it's a nested list
+                doc_embedding = None
+                if hasattr(doc_chunk, 'embedding') and doc_chunk.embedding:
+                    # Handle case where embedding is a nested list [[values...]]
+                    if isinstance(doc_chunk.embedding, list) and len(doc_chunk.embedding) > 0 and isinstance(doc_chunk.embedding[0], list):
+                        doc_embedding = doc_chunk.embedding[0]
+                    else:
+                        doc_embedding = doc_chunk.embedding
+                
                 chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                     organization_id=organization_id,
                     query_text=chunk_content,
                     current_document_id=document_id,  # Exclude the current document from search
                     limit=max_relevant_chunks,  # Get context specific to this chunk
-                    query_embedding=doc_chunk.embedding if hasattr(doc_chunk, 'embedding') and doc_chunk.embedding else None
+                    query_embedding=doc_embedding
                 )
                 
                 # Add all relevant chunks to our global set, tracking by file_id and chunk_index
@@ -169,7 +178,11 @@ class DocumentAnalysisService:
             full_doc_embedding = None
             # Simple approach: Use the first document chunk's embedding if available
             if document_chunks and hasattr(document_chunks[0], 'embedding') and document_chunks[0].embedding:
-                full_doc_embedding = document_chunks[0].embedding
+                # Handle case where embedding is a nested list [[values...]]
+                if isinstance(document_chunks[0].embedding, list) and len(document_chunks[0].embedding) > 0 and isinstance(document_chunks[0].embedding[0], list):
+                    full_doc_embedding = document_chunks[0].embedding[0]
+                else:
+                    full_doc_embedding = document_chunks[0].embedding
                 logger.info(f"Using existing embedding from document chunks for full document analysis")
             
             full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
@@ -483,7 +496,14 @@ class DocumentAnalysisService:
                     if not query_embedding_result or len(query_embedding_result) == 0:
                         logger.error("Failed to generate embedding for query text")
                         return []
-                    query_embedding = query_embedding_result[0]
+                    
+                    # Handle case where embedding is a nested list [[values...]]
+                    if isinstance(query_embedding_result[0], list) and len(query_embedding_result[0]) > 0 and isinstance(query_embedding_result[0][0], list):
+                        query_embedding = query_embedding_result[0][0]  # Extract from nested list
+                        logger.debug(f"Extracted embedding from nested list structure")
+                    else:
+                        query_embedding = query_embedding_result[0]
+                        
                 except Exception as e:
                     error_details = str(e)
                     if hasattr(e, '__cause__') and e.__cause__ is not None:
@@ -493,7 +513,11 @@ class DocumentAnalysisService:
                     # Return empty list so document analysis can continue without vector search
                     return []
             else:
-                # Use the provided embedding
+                # Use the provided embedding, but handle nested list case
+                if isinstance(query_embedding, list) and len(query_embedding) > 0 and isinstance(query_embedding[0], list):
+                    query_embedding = query_embedding[0]  # Extract from nested list
+                    logger.debug(f"Extracted provided embedding from nested list structure")
+                
                 logger.debug(f"Using provided embedding of length {len(query_embedding)}")
                 
             async with async_session_maker() as session:
@@ -536,6 +560,7 @@ class DocumentAnalysisService:
                         
                         # Build complete SQL query using native pgvector operator
                         # 1 - (embedding <=> :query_vector) gives us similarity score between 0-1
+                        # Use the <=> operator directly with query_vector parameter
                         sql_query = f"""
                             SELECT 
                                 kb.*,
@@ -550,9 +575,11 @@ class DocumentAnalysisService:
                         """
                         
                         # Parameters for the query
+                        # Ensure embedding is passed directly as a flat list, not as a nested list
+                        # This is crucial for pgvector to work correctly
                         params = {
                             "org_id": organization_id,
-                            "query_vector": query_embedding,
+                            "query_vector": query_embedding if not isinstance(query_embedding, list) or not isinstance(query_embedding[0], list) else query_embedding[0],
                             "limit": initial_limit
                         }
                         
