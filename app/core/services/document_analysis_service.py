@@ -214,13 +214,12 @@ class DocumentAnalysisService:
             document_relevant_kb = [chunk_tuple[1] for chunk_tuple in all_relevant_kb_chunks]
             
             # Convert the chunks to a list of KB chunk info dictionaries with rich metadata
-            # ONLY include chunks with similarity_score > 0.5 (50%) to avoid irrelevant content
+            # Include ALL chunks regardless of similarity score, but sort by similarity for better results
             consolidated_kb_chunks = []
             from app.database.models.db_models import File
             
-            # Define similarity threshold - only include chunks with at least 50% similarity
-            SIMILARITY_THRESHOLD = 0.5  # 50% similarity threshold
-            
+            # Create a list of chunks with their similarity scores
+            chunks_with_scores = []
             for kb_chunk in document_relevant_kb:
                 # Get file name for better context
                 file_name = "Unknown"
@@ -234,29 +233,56 @@ class DocumentAnalysisService:
                 except Exception as e:
                     logger.error(f"Error retrieving filename: {str(e)}")
                 
-                # Only include chunks with similarity_score > SIMILARITY_THRESHOLD (50%)
+                # Get similarity score (default to 0 if not set)
                 similarity_score = getattr(kb_chunk, 'similarity_score', 0)
                 
                 # Log the similarity score for debugging
                 logger.debug(f"KB Chunk {kb_chunk.file_id}_{kb_chunk.chunk_index} has similarity: {similarity_score}")
                 
-                # Only add chunks that meet the threshold
-                if similarity_score >= SIMILARITY_THRESHOLD:
-                    # Add rich metadata to provide better context 
-                    chunk_info = {
-                        "document_name": file_name,
-                        "document_id": kb_chunk.file_id,
-                        "chunk_index": kb_chunk.chunk_index,
-                        "similarity_score": similarity_score,
-                        "content": kb_chunk.content,
-                        "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
-                    }
-                    consolidated_kb_chunks.append(chunk_info)
-                    logger.debug(f"Added KB chunk with similarity score: {similarity_score}")
-                else:
-                    logger.debug(f"Skipped KB chunk: similarity {similarity_score} below threshold {SIMILARITY_THRESHOLD}")
+                # Create a rich metadata object and add to the list
+                chunk_info = {
+                    "document_name": file_name,
+                    "document_id": kb_chunk.file_id,
+                    "chunk_index": kb_chunk.chunk_index,
+                    "similarity_score": similarity_score,
+                    "content": kb_chunk.content,
+                    "meta_info": kb_chunk.meta_info if kb_chunk.meta_info else {}
+                }
+                chunks_with_scores.append((chunk_info, similarity_score))
+                logger.debug(f"Added KB chunk with similarity score: {similarity_score}")
             
-            logger.info(f"Found {len(consolidated_kb_chunks)} relevant knowledge base chunks for analysis")
+            # Sort chunks by similarity score (highest first)
+            chunks_with_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # Take the top 2 chunks with highest similarity scores
+            top_limit = min(2, len(chunks_with_scores))
+            top_chunks = [chunk_data[0] for chunk_data in chunks_with_scores[:top_limit]]
+            
+            # Also include adjacent chunks (one before and one after) for each top chunk
+            # First, group by document_id
+            doc_chunks = {}
+            for chunk in top_chunks:
+                doc_id = chunk["document_id"]
+                if doc_id not in doc_chunks:
+                    doc_chunks[doc_id] = []
+                doc_chunks[doc_id].append(chunk["chunk_index"])
+            
+            # Identify adjacent chunk indexes
+            adjacent_chunks = []
+            for doc_id, chunk_indexes in doc_chunks.items():
+                for idx in chunk_indexes:
+                    # For each top chunk, find chunks with index +1 and -1
+                    for adj_idx in [idx-1, idx+1]:
+                        # Find this adjacent chunk in our original chunk_with_scores list
+                        for chunk_info, _ in chunks_with_scores:
+                            if chunk_info["document_id"] == doc_id and chunk_info["chunk_index"] == adj_idx:
+                                adjacent_chunks.append(chunk_info)
+                                break
+            
+            # Combine top chunks and adjacent chunks
+            consolidated_kb_chunks = top_chunks + adjacent_chunks
+            
+            logger.info(f"Selected {len(top_chunks)} top chunks and {len(adjacent_chunks)} adjacent chunks for analysis")
             
             # Perform a single comprehensive analysis with the full document against all relevant KB chunks
             chunk_start_time = datetime.now()

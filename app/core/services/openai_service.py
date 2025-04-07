@@ -380,11 +380,13 @@ class OpenAIService:
             2. POLICY CONTRADICTION DETECTION: Identify EACH AND EVERY TERM that contradicts company policies found in the knowledge base. 
             3. INTEREST PROTECTION: Find ALL specific instances where contract terms deviate from company interests (e.g., payment terms, liability limitations, interest rates, penalty clauses, etc.)
             4. RISK ANALYSIS: Detect any clause that creates potential legal, financial, or operational risks for the company.
+            5. REQUIRED CHANGES: For each identified conflict or issue, provide SPECIFIC CORRECTIVE TEXT that MUST be implemented to comply with company policy.
 
             ANALYSIS METHODOLOGY:
             - Compare each section of the document against relevant knowledge base entries
-            - Identify exact paragraphs, clauses and terms needing modification
-            - For each issue, provide the current term and the exact required correction
+            - Do NOT just suggest changes - state definitive corrections that NEED to be made
+            - For each issue, state the current problematic term and then provide the EXACT required replacement text
+            - Use direct, declarative language such as "MUST BE CHANGED TO" rather than "consider changing"
             - Reference specific sections, page numbers, or paragraph numbers when possible
 
             REQUIRED RESPONSE FORMAT (JSON):
@@ -395,25 +397,26 @@ class OpenAIService:
                 "Detailed key point 2 focusing on material terms"
               ],
               "conflicts": [
-                "SECTION X.Y: Current interest rate of Z% conflicts with company policy requiring A%. MUST BE CHANGED to A%.",
-                "CLAUSE X.Y.Z: Current delivery terms of N days conflicts with standard term of M days. MUST BE ADJUSTED to M days."
+                "SECTION X.Y: Current interest rate of Z% DOES NOT COMPLY with company policy. MUST BE CHANGED to A%.",
+                "CLAUSE X.Y.Z: Current delivery terms of N days VIOLATES standard policy. MUST BE CHANGED to M days."
               ],
               "recommendations": [
-                "Modify Section X.Y to change interest rate from Z% to A% to comply with company policy document [policy reference]",
-                "Revise Clause X.Y.Z to adjust delivery terms from N days to M days as required by [policy/legal reference]"
+                "REPLACE Section X.Y text from 'current problematic text' TO 'exact corrective text' to comply with company policy",
+                "CHANGE Clause X.Y.Z from 'current problematic text' TO 'exact corrective text' as required by policy"
               ]
             }
 
             CRITICAL INSTRUCTIONS:
-            - BE EXTREMELY PRECISE - Provide exact section numbers, exact current values, and exact required values
-            - BE ABSOLUTELY DECISIVE - Use declarative language (MUST, REQUIRED, NECESSARY, IMPERATIVE)
+            - BE EXTREMELY DECISIVE - All identified issues REQUIRE correction, not suggestions
+            - PROVIDE EXACT REPLACEMENT TEXT - Don't just identify problems, provide precise corrective text
+            - USE IMPERATIVE LANGUAGE - Use terms like "MUST", "REQUIRED", "CHANGE TO", rather than "should consider"
             - CITE REFERENCES - When identifying conflicts, cite the specific company policy or legal requirement
-            - PROVIDE EXACT VALUES - Always specify the current problematic value and the exact required replacement value
             - MATCH DOCUMENT LANGUAGE - Detect the language of the input document and respond in EXACTLY the same language
             - For Turkish documents, respond in Turkish. For English documents, respond in English, etc.
             - FORMAT CONSISTENTLY - Keep all section references in consistent format (e.g., "Section 4.2" or "Madde 4.2")
             
-            REMEMBER: Your analysis will be used to make critical legal and business decisions. Accuracy, specificity, and attention to detail are ESSENTIAL.
+            REMEMBER: Your analysis will be used to make immediate corrections to legal documents. 
+            You must provide precise, definitive changes that MUST be implemented, not mere suggestions.
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
@@ -438,8 +441,17 @@ class OpenAIService:
             2. Perform a thorough comparison between the document and ALL knowledge base entries
             3. Identify EACH NUMBER, PERCENTAGE, DATE, TIMEFRAME or SPECIFIC TERM that does not match company policy
             4. For each issue found, specify EXACT section references (e.g., "Section 3.2.1" or "Madde 5.4")
-            5. Whenever you identify a problem, provide the EXACT current value and the EXACT required corrected value
-            6. Indicate the SPECIFIC policy or legal requirement from knowledge base that is being violated
+            5. Whenever you identify a problem:
+               - Quote the EXACT problematic text
+               - State the EXACT replacement text that MUST be used instead
+               - Explain why the change is mandatory (which policy it violates)
+            6. For each identified issue, use language like "MUST BE CHANGED TO", not suggestions
+            
+            CRITICAL REQUIREMENTS:
+            - DO NOT present analysis as recommendations or suggestions 
+            - Present all findings as MANDATORY corrections
+            - For each issue, provide both the problematic text AND the required replacement text
+            - Use decisive language such as "MUST", "REQUIRED", "CHANGE TO"
             
             CRITICAL FOCUS AREAS:
             - Payment terms (ödeme koşulları)
@@ -453,8 +465,8 @@ class OpenAIService:
             - Warranty periods (garanti süreleri)
             - Delivery timeframes (teslimat süreleri)
             
-            Find EVERY SINGLE INSTANCE where the document differs from the company's standard terms as defined in the knowledge base.
-            Your analysis will be used for legal review and contract negotiations - ACCURACY IS CRITICAL.
+            Find EVERY SINGLE INSTANCE where the document differs from the company's standard terms.
+            All identified discrepancies MUST be changed to comply with company policy.
             
             Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology.
             """
