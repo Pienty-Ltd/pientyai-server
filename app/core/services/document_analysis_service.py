@@ -114,12 +114,10 @@ class DocumentAnalysisService:
                 # Use the document chunk's existing embedding if available
                 # Ensure we flatten the embedding array if it's a nested list
                 doc_embedding = None
-                if hasattr(doc_chunk, 'embedding') and doc_chunk.embedding:
-                    # Handle case where embedding is a nested list [[values...]]
-                    if isinstance(doc_chunk.embedding, list) and len(doc_chunk.embedding) > 0 and isinstance(doc_chunk.embedding[0], list):
-                        doc_embedding = doc_chunk.embedding[0]
-                    else:
-                        doc_embedding = doc_chunk.embedding
+                if hasattr(doc_chunk, 'embedding') and doc_chunk.embedding is not None:
+                    # Simply use the embedding as is - pgvector expects a flat list of floats
+                    # which is already stored correctly in the database
+                    doc_embedding = doc_chunk.embedding
                 
                 chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                     organization_id=organization_id,
@@ -177,12 +175,10 @@ class DocumentAnalysisService:
             # Prepare embedding for the full document if any document chunks have embeddings
             full_doc_embedding = None
             # Simple approach: Use the first document chunk's embedding if available
-            if document_chunks and hasattr(document_chunks[0], 'embedding') and document_chunks[0].embedding:
-                # Handle case where embedding is a nested list [[values...]]
-                if isinstance(document_chunks[0].embedding, list) and len(document_chunks[0].embedding) > 0 and isinstance(document_chunks[0].embedding[0], list):
-                    full_doc_embedding = document_chunks[0].embedding[0]
-                else:
-                    full_doc_embedding = document_chunks[0].embedding
+            if document_chunks and hasattr(document_chunks[0], 'embedding') and document_chunks[0].embedding is not None:
+                # Simply use the embedding as is - pgvector expects a flat list of floats
+                # which is already stored correctly in the database
+                full_doc_embedding = document_chunks[0].embedding
                 logger.info(f"Using existing embedding from document chunks for full document analysis")
             
             full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
@@ -575,11 +571,11 @@ class DocumentAnalysisService:
                         """
                         
                         # Parameters for the query
-                        # Ensure embedding is passed directly as a flat list, not as a nested list
-                        # This is crucial for pgvector to work correctly
+                        # Pass embedding directly to pgvector as is
+                        # The embedding should already be in the correct format as stored in the database (flat array of floats)
                         params = {
                             "org_id": organization_id,
-                            "query_vector": query_embedding if not isinstance(query_embedding, list) or not isinstance(query_embedding[0], list) else query_embedding[0],
+                            "query_vector": query_embedding,
                             "limit": initial_limit
                         }
                         
