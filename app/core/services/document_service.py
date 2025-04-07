@@ -145,57 +145,103 @@ class DocumentService:
             extraction_duration = (datetime.now() - start_time).total_seconds()
             logger.info(f"Extracted {len(text_chunks)} chunks from document (Duration: {extraction_duration}s)")
 
-            # Process chunks in batches
-            chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
-                           for i in range(0, len(text_chunks), self.BATCH_SIZE)]
-
             total_chunks = len(text_chunks)
             processing_start = datetime.now()
-            logger.info(f"Starting document processing with {total_chunks} total chunks")
+            logger.info(f"Starting document processing with {total_chunks} total chunks using batch API")
 
             async with async_session_maker() as session:
-                for batch_idx, chunk_batch in enumerate(chunk_batches):
-                    try:
-                        batch_start = datetime.now()
-
-                        # Generate embeddings and create knowledge base entries
+                try:
+                    # Process all chunks at once using OpenAI's batch API
+                    batch_start = datetime.now()
+                    
+                    # Use the new batch API method to get embeddings for all chunks at once
+                    logger.info(f"Generating embeddings for all {total_chunks} chunks in a single batch API call")
+                    embeddings = await self.openai_service.create_batch_embeddings(text_chunks)
+                    
+                    embedding_duration = (datetime.now() - batch_start).total_seconds()
+                    logger.info(f"Generated embeddings for all {len(embeddings)} chunks (Duration: {embedding_duration}s)")
+                    
+                    # Create knowledge base entries for all chunks
+                    batch_entries = []
+                    
+                    for idx, (chunk, embedding) in enumerate(zip(text_chunks, embeddings)):
+                        kb_entry = KnowledgeBase(
+                            chunk_index=idx,
+                            content=chunk,
+                            embedding=embedding,
+                            meta_info=json.dumps({
+                                "filename": filename,
+                                "chunk_number": idx + 1,
+                                "total_chunks": total_chunks
+                            }),
+                            file_id=db_file_id,
+                            organization_id=organization_id,
+                            is_knowledge_base=is_knowledge_base
+                        )
+                        batch_entries.append(kb_entry)
+                    
+                    # Create knowledge base entries in chunks to avoid memory issues
+                    insert_batch_size = 100  # Insert into database in batches of 100 entries
+                    for i in range(0, len(batch_entries), insert_batch_size):
+                        db_batch = batch_entries[i:i + insert_batch_size]
+                        session.add_all(db_batch)
+                        await session.commit()
+                        logger.info(f"Inserted knowledge base entries {i+1} to {i+len(db_batch)} into database")
+                    
+                    total_duration = (datetime.now() - batch_start).total_seconds()
+                    logger.info(f"Processed and saved all {total_chunks} chunks (Total duration: {total_duration}s)")
+                
+                except Exception as e:
+                    logger.error(f"Error processing chunks with batch API: {str(e)}", exc_info=True)
+                    # Fall back to traditional batching if batch API fails
+                    logger.info(f"Falling back to regular batch processing after batch API failure")
+                    
+                    # Process chunks in traditional batches as before
+                    chunk_batches = [text_chunks[i:i + self.BATCH_SIZE] 
+                                   for i in range(0, len(text_chunks), self.BATCH_SIZE)]
+                    
+                    for batch_idx, chunk_batch in enumerate(chunk_batches):
                         try:
-                            embeddings = await self.openai_service.create_embeddings(chunk_batch)
-
-                            # Create knowledge base entries for the batch
-                            batch_entries = []
-                            start_idx = batch_idx * self.BATCH_SIZE
-
-                            for idx, (chunk, embedding) in enumerate(zip(chunk_batch, embeddings)):
-                                kb_entry = KnowledgeBase(
-                                    chunk_index=start_idx + idx,
-                                    content=chunk,
-                                    embedding=embedding,
-                                    meta_info=json.dumps({
-                                        "filename": filename,
-                                        "chunk_number": start_idx + idx + 1,
-                                        "total_chunks": total_chunks
-                                    }),
-                                    file_id=db_file_id,
-                                    organization_id=organization_id,
-                                    is_knowledge_base=is_knowledge_base
-                                )
-                                batch_entries.append(kb_entry)
-
-                            # Bulk insert the batch
-                            session.add_all(batch_entries)
-                            await session.commit()
-
-                            batch_duration = (datetime.now() - batch_start).total_seconds()
-                            logger.info(f"Processed and saved batch {batch_idx + 1}/{len(chunk_batches)} (Duration: {batch_duration}s)")
-
+                            batch_start = datetime.now()
+    
+                            # Generate embeddings and create knowledge base entries
+                            try:
+                                embeddings = await self.openai_service.create_batch_embeddings(chunk_batch)
+    
+                                # Create knowledge base entries for the batch
+                                batch_entries = []
+                                start_idx = batch_idx * self.BATCH_SIZE
+    
+                                for idx, (chunk, embedding) in enumerate(zip(chunk_batch, embeddings)):
+                                    kb_entry = KnowledgeBase(
+                                        chunk_index=start_idx + idx,
+                                        content=chunk,
+                                        embedding=embedding,
+                                        meta_info=json.dumps({
+                                            "filename": filename,
+                                            "chunk_number": start_idx + idx + 1,
+                                            "total_chunks": total_chunks
+                                        }),
+                                        file_id=db_file_id,
+                                        organization_id=organization_id,
+                                        is_knowledge_base=is_knowledge_base
+                                    )
+                                    batch_entries.append(kb_entry)
+    
+                                # Bulk insert the batch
+                                session.add_all(batch_entries)
+                                await session.commit()
+    
+                                batch_duration = (datetime.now() - batch_start).total_seconds()
+                                logger.info(f"Processed and saved batch {batch_idx + 1}/{len(chunk_batches)} (Duration: {batch_duration}s)")
+    
+                            except Exception as e:
+                                logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
+                                continue
+    
                         except Exception as e:
                             logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
                             continue
-
-                    except Exception as e:
-                        logger.error(f"Error processing batch {batch_idx + 1}: {str(e)}")
-                        continue
 
                 # Update chunk count using SQL COUNT before setting status to completed
                 try:
@@ -356,7 +402,7 @@ class DocumentService:
             start_time = datetime.now()
 
             # Generate embedding for search query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
@@ -445,7 +491,7 @@ class DocumentService:
             start_time = datetime.now()
 
             # Generate embedding for search query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
@@ -498,7 +544,7 @@ class DocumentService:
             start_time = datetime.now()
 
             # Generate embedding for search query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
@@ -588,7 +634,7 @@ class DocumentService:
         """
         try:
             # Generate embedding for query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
@@ -716,7 +762,7 @@ class DocumentService:
             start_time = datetime.now()
 
             # Generate embedding for search query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")
@@ -1096,7 +1142,7 @@ class DocumentService:
             start_time = datetime.now()
 
             # Generate embedding for search query
-            query_embedding = await self.openai_service.create_embeddings([query])
+            query_embedding = await self.openai_service.create_batch_embeddings([query])
             if not query_embedding or len(query_embedding) == 0:
                 logger.error("Failed to generate embedding for search query")
                 raise ValueError("Failed to generate embedding for search query")

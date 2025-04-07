@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 from typing import List, Optional, Dict, Any
 from openai import OpenAI
 from app.core.config import config
@@ -10,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIService:
-    BATCH_SIZE = 20  # Maximum number of texts to process in one API call
+    BATCH_SIZE = 20  # Maximum number of texts to process in one API call for regular embedding creation
+    BATCH_API_MAX_SIZE = 2000  # Maximum number of texts to process in one batch API call
     MAX_RETRIES = 3  # Maximum number of retries for failed API calls
     RETRY_DELAY = 1  # Delay between retries in seconds
 
@@ -93,6 +95,85 @@ class OpenAIService:
 
             return all_embeddings
 
+        except Exception as e:
+            logger.error(f"Error creating embeddings: {str(e)}")
+            raise
+            
+    async def create_batch_embeddings(self, text_chunks: List[str]) -> List[List[float]]:
+        """
+        Create embeddings for a list of text chunks using OpenAI's API
+        This method handles large volumes of text chunks in a single batch request
+        rather than splitting into smaller batches and making multiple API calls.
+        
+        For small batches, this uses the standard embeddings API.
+        For very large batches, it would be more efficient to use OpenAI's true Batch API 
+        with the two-step process (create a batch job, then retrieve results), but
+        this implementation uses the standard API for simplicity and immediate results.
+        
+        Args:
+            text_chunks: List of text chunks to convert to embeddings
+            
+        Returns:
+            List of embedding vectors, one for each input text chunk
+        """
+        if not text_chunks:
+            logger.warning("Empty text chunks provided to create_batch_embeddings")
+            return []
+            
+        # Ensure we don't exceed the maximum batch size
+        if len(text_chunks) > self.BATCH_API_MAX_SIZE:
+            logger.warning(f"Input size ({len(text_chunks)}) exceeds max batch size ({self.BATCH_API_MAX_SIZE}). "
+                          f"Will process in multiple batch requests.")
+            
+            # Process in multiple batch API calls if needed
+            all_embeddings = []
+            for i in range(0, len(text_chunks), self.BATCH_API_MAX_SIZE):
+                batch = text_chunks[i:i + self.BATCH_API_MAX_SIZE]
+                batch_embeddings = await self.create_batch_embeddings(batch)
+                all_embeddings.extend(batch_embeddings)
+            return all_embeddings
+        
+        try:
+            logger.info(f"Creating embeddings for {len(text_chunks)} text chunks using batch processing")
+            retry_count = 0
+            
+            while retry_count < self.MAX_RETRIES:
+                try:
+                    # Submit the request - run in a thread pool to prevent blocking
+                    logger.debug(f"Submitting embedding request with {len(text_chunks)} inputs")
+                    
+                    response = await asyncio.to_thread(
+                        self.client.embeddings.create,
+                        model="text-embedding-ada-002",
+                        input=text_chunks  # OpenAI client handles batching internally
+                    )
+                    
+                    # Extract embeddings from response
+                    all_embeddings = [item.embedding for item in response.data]
+                    
+                    logger.info(f"Successfully received {len(all_embeddings)} embeddings from batch request")
+                    logger.debug(f"Sample embedding length: {len(all_embeddings[0]) if all_embeddings else 0}")
+                    
+                    return all_embeddings
+                    
+                except Exception as e:
+                    error_details = str(e)
+                    if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                        try:
+                            error_json = e.response.json()
+                            error_details = f"Error code: {e.response.status_code} - {error_json}"
+                            logger.error(f"OpenAI API error details: {error_json}")
+                        except:
+                            pass
+                    
+                    retry_count += 1
+                    if retry_count == self.MAX_RETRIES:
+                        logger.error(f"Failed to generate embeddings after {self.MAX_RETRIES} retries: {error_details}")
+                        raise Exception(f"Error creating embeddings: {error_details}")
+                    
+                    logger.warning(f"Retry {retry_count}/{self.MAX_RETRIES} for embeddings: {error_details}")
+                    await asyncio.sleep(self.RETRY_DELAY * retry_count)  # Exponential backoff
+        
         except Exception as e:
             logger.error(f"Error creating embeddings: {str(e)}")
             raise
