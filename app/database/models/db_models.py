@@ -144,6 +144,8 @@ class UserSubscription(Base):
     subscription_start = Column(DateTime(timezone=True))
     subscription_end = Column(DateTime(timezone=True))
     stripe_subscription_id = Column(String)
+    stripe_customer_id = Column(String)
+    price_id = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

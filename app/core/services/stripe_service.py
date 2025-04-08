@@ -172,6 +172,48 @@ class StripeService:
         if not self.public_key:
             raise StripeError("Stripe public key not configured")
         return self.public_key
+        
+    def create_checkout_session(
+        self,
+        price_id: str,
+        success_url: str,
+        cancel_url: str,
+        customer_email: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        mode: str = 'subscription'
+    ) -> Dict[str, Any]:
+        """
+        Create a Stripe Checkout Session
+        :param price_id: Stripe Price ID
+        :param success_url: URL to redirect after successful payment
+        :param cancel_url: URL to redirect after cancelled payment
+        :param customer_email: Customer email (optional)
+        :param metadata: Optional metadata
+        :param mode: Checkout mode (subscription, payment, or setup)
+        :return: Stripe Checkout Session object
+        """
+        try:
+            session_data = {
+                'line_items': [{'price': price_id, 'quantity': 1}],
+                'mode': mode,
+                'success_url': success_url,
+                'cancel_url': cancel_url,
+                'metadata': metadata or {}
+            }
+            
+            if customer_email:
+                session_data['customer_email'] = customer_email
+                
+            checkout_session = stripe.checkout.Session.create(**session_data)
+            logger.info(f"Created Checkout Session: {checkout_session.id}")
+            return checkout_session
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error creating Checkout Session: {str(e)}")
+            raise StripeError(f"Stripe error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating Checkout Session: {str(e)}")
+            raise StripeError("An unexpected error occurred")
 
     def cancel_subscription(
         self,
