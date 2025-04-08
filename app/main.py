@@ -18,6 +18,7 @@ from app.api.v1.dashboard_routes import router as dashboard_router
 from app.api.v1.invitation_routes import router as invitation_router
 from app.api.v1.document_analysis_routes import router as document_analysis_router
 from app.api.v1.subscription_routes import router as subscription_router
+from app.api.v1.webhooks.stripe_routes import router as stripe_webhook_router
 from app.api.v1 import router as v1_router
 from app.core.config import config
 from app.database.database_factory import create_tables, get_db
@@ -62,6 +63,7 @@ app.include_router(dashboard_router)
 app.include_router(invitation_router)
 app.include_router(document_analysis_router)
 app.include_router(subscription_router)
+app.include_router(stripe_webhook_router)
 app.include_router(v1_router)
 
 

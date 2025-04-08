@@ -15,14 +15,26 @@ class StripeService:
     def __init__(self):
         """Initialize Stripe configuration"""
         self.is_production = config.API_PRODUCTION
+        
+        # Initialize key variables with safety checks
         if self.is_production:
             self.public_key = config.STRIPE_LIVE_PUBLIC_KEY
-            stripe.api_key = config.STRIPE_LIVE_SECRET_KEY
-            logger.info("Initialized Stripe in PRODUCTION mode")
+            api_key = config.STRIPE_LIVE_SECRET_KEY
+            env_type = "PRODUCTION"
         else:
             self.public_key = config.STRIPE_TEST_PUBLIC_KEY
-            stripe.api_key = config.STRIPE_TEST_SECRET_KEY
-            logger.info("Initialized Stripe in TEST mode")
+            api_key = config.STRIPE_TEST_SECRET_KEY
+            env_type = "TEST"
+            
+        # Verify we have the required keys
+        if not api_key:
+            error_msg = f"Stripe API key not configured for {env_type} mode"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Set the API key after validation
+        stripe.api_key = api_key
+        logger.info(f"Initialized Stripe in {env_type} mode")
 
         # Configure Stripe client
         stripe.api_version = "2023-10-16"  # Lock API version

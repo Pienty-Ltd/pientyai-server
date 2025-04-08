@@ -107,6 +107,17 @@ async def create_checkout_session(
         
         # Create checkout session
         # Make sure price_id is always a string to fix LSP issue
+        # Also handle the case where price_id might be None
+        if price_id is None:
+            price_id = config.STRIPE_PRICE_ID
+            
+        if not price_id:
+            logger.error("No price_id provided or configured in environment")
+            return BaseResponse(
+                success=False,
+                error=ErrorResponse(message="No price ID configured for subscription")
+            )
+            
         checkout_session = stripe_service.create_checkout_session(
             price_id=str(price_id),
             success_url=request.success_url,
