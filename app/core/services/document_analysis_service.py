@@ -1393,16 +1393,76 @@ class DocumentAnalysisService:
                 "legal_compliance_issues": []
             }
 
+            # Function to check if a recommendation is too similar to existing ones
+            def is_too_similar(new_rec, existing_recs, similarity_threshold=0.70):
+                # Extract key terms from the recommendation
+                # For Turkish text, focusing on key terms like "değiştirilmelidir", "çıkarılmalıdır" etc.
+                import re
+                
+                # Simple text normalization - lowercase and remove punctuation
+                def normalize_text(text):
+                    text = text.lower()
+                    text = re.sub(r'[^\w\s]', ' ', text)
+                    return text
+                
+                # Get significant parts of the recommendation (important for detecting duplicates)
+                def get_key_parts(text):
+                    # Extract quoted parts which typically contain the current and replacement text
+                    quoted_parts = re.findall(r"'([^']*)'|\"([^\"]*)\"", text)
+                    # Flatten the tuple list from re.findall
+                    quoted_parts = [part[0] if part[0] else part[1] for part in quoted_parts if part[0] or part[1]]
+                    
+                    # Extract madde/section references
+                    section_refs = re.findall(r'([Mm][Aa][Dd][Dd][Ee]|[Ss][Ee][Cc][Tt][Ii][Oo][Nn])\s+(\d+(\.\d+)*)', text)
+                    section_refs = [f"{match[0]} {match[1]}" for match in section_refs]
+                    
+                    return quoted_parts, section_refs
+                
+                # Normalize new recommendation
+                norm_new = normalize_text(new_rec)
+                new_quoted, new_sections = get_key_parts(new_rec)
+                
+                for rec in existing_recs:
+                    # Normalize existing recommendation
+                    norm_existing = normalize_text(rec)
+                    existing_quoted, existing_sections = get_key_parts(rec)
+                    
+                    # Check for section reference overlap
+                    if new_sections and existing_sections:
+                        common_sections = set(new_sections).intersection(set(existing_sections))
+                        if common_sections:
+                            # If they refer to the same section and have similar content, likely duplicate
+                            if new_quoted and existing_quoted:
+                                # Check for similarity in quoted content
+                                for new_q in new_quoted:
+                                    for ex_q in existing_quoted:
+                                        if len(new_q) > 10 and len(ex_q) > 10:  # Only check substantive quotes
+                                            # If quoted content is similar, it's likely a duplicate
+                                            if new_q in ex_q or ex_q in new_q:
+                                                return True
+                    
+                    # For cases where section may not be properly extracted, do a more general similarity check
+                    if len(norm_new) > 20 and len(norm_existing) > 20:  # Only check substantive recommendations
+                        # Check if they have very similar wording
+                        if norm_new in norm_existing or norm_existing in norm_new:
+                            return True
+                
+                return False  # Not similar enough to consider a duplicate
+
             # Extract all original AI recommendations directly without filtering
             for chunk in analysis_results:
                 if "recommendations" in chunk and isinstance(
                         chunk["recommendations"], list):
-                    # Add all recommendations directly from AI
+                    # Add all recommendations directly from AI, but check for duplicates
                     for rec in chunk["recommendations"]:
-                        if isinstance(
-                                rec, str
-                        ) and rec not in suggestions["recommendations"]:
+                        if not isinstance(rec, str):
+                            continue
+                            
+                        # Check if it's too similar to existing recommendations
+                        if not is_too_similar(rec, suggestions["recommendations"]):
                             suggestions["recommendations"].append(rec)
+                        else:
+                            logger.debug(f"Skipping similar recommendation: {rec[:50]}...")
 
                 # Extract conflicts directly from AI output
                 if "conflicts" in chunk and isinstance(chunk["conflicts"],
@@ -1440,20 +1500,56 @@ class DocumentAnalysisService:
                                 "constitution", "tüzük"
                             ])
 
-                        # Look for a corresponding recommendation for this conflict
+                        # Find a corresponding recommendation - improved matching logic
                         matching_recommendation = None
+                        
+                        # Extract key identifiers from this conflict (section refs, specific terms)
+                        conflict_sections = re.findall(r'([Mm][Aa][Dd][Dd][Ee]|[Ss][Ee][Cc][Tt][Ii][Oo][Nn])\s+(\d+(\.\d+)*)', conflict)
+                        conflict_sections = [f"{match[0]} {match[1]}" for match in conflict_sections]
+                        
+                        # Extract quoted text from conflict if available
+                        conflict_quotes = re.findall(r"'([^']*)'|\"([^\"]*)\"", conflict)
+                        conflict_quotes = [q[0] if q[0] else q[1] for q in conflict_quotes if q[0] or q[1]]
+                        
+                        # Check recommendations for matches based on section references and quoted text
+                        best_match_score = 0
                         for rec in suggestions["recommendations"]:
-                            # If the recommendation mentions similar terms as the conflict,
-                            # it's likely related
-                            if any(term in rec.lower(
-                            ) and term in conflict.lower() for term in [
-                                    "faiz", "interest", "ödeme", "payment",
-                                    "gün", "day", "mahkeme", "court", "ceza",
-                                    "penalty", "süre", "period", "vade", "term"
-                            ]):
+                            match_score = 0
+                            
+                            # Check for section reference match
+                            rec_sections = re.findall(r'([Mm][Aa][Dd][Dd][Ee]|[Ss][Ee][Cc][Tt][Ii][Oo][Nn])\s+(\d+(\.\d+)*)', rec)
+                            rec_sections = [f"{match[0]} {match[1]}" for match in rec_sections]
+                            
+                            # If both have section references and they match, strong indicator
+                            if conflict_sections and rec_sections:
+                                for cs in conflict_sections:
+                                    if any(cs.lower() == rs.lower() for rs in rec_sections):
+                                        match_score += 3  # Strong section match
+                            
+                            # Look for matching quoted text
+                            rec_quotes = re.findall(r"'([^']*)'|\"([^\"]*)\"", rec)
+                            rec_quotes = [q[0] if q[0] else q[1] for q in rec_quotes if q[0] or q[1]]
+                            
+                            if conflict_quotes and rec_quotes:
+                                for cq in conflict_quotes:
+                                    for rq in rec_quotes:
+                                        if cq in rq or rq in cq:
+                                            match_score += 2  # Matching quoted text
+                            
+                            # Check for shared key terms
+                            key_terms = ["faiz", "interest", "ödeme", "payment", 
+                                         "gün", "day", "mahkeme", "court", "ceza",
+                                         "penalty", "süre", "period", "vade", "term"]
+                                         
+                            for term in key_terms:
+                                if term in rec.lower() and term in conflict.lower():
+                                    match_score += 1  # Matching key term
+                            
+                            # If this is the best match so far and it's above our threshold, save it
+                            if match_score > best_match_score and match_score >= 2:
+                                best_match_score = match_score
                                 matching_recommendation = rec
-                                break
-
+                        
                         # Add to sections with direct conflict and recommendation
                         change_section = {
                             "chunk_index": chunk.get("chunk_index", 0),
@@ -1467,16 +1563,21 @@ class DocumentAnalysisService:
                             "is_legal_issue": is_legal_issue
                         }
 
-                        suggestions["sections"].append(change_section)
+                        # Check if a very similar section already exists
+                        existing_similar_section = False
+                        for existing_section in suggestions["sections"]:
+                            if existing_section["section"] == section_ref and existing_section["conflict"] == conflict:
+                                existing_similar_section = True
+                                break
+                        
+                        if not existing_similar_section:
+                            suggestions["sections"].append(change_section)
 
-                        # Add to appropriate categorized lists
-                        if is_policy_conflict and conflict not in suggestions[
-                                "policy_conflicts"]:
-                            suggestions["policy_conflicts"].append(conflict)
-                        if is_legal_issue and conflict not in suggestions[
-                                "legal_compliance_issues"]:
-                            suggestions["legal_compliance_issues"].append(
-                                conflict)
+                            # Add to appropriate categorized lists (avoiding duplicates)
+                            if is_policy_conflict and not is_too_similar(conflict, suggestions["policy_conflicts"]):
+                                suggestions["policy_conflicts"].append(conflict)
+                            if is_legal_issue and not is_too_similar(conflict, suggestions["legal_compliance_issues"]):
+                                suggestions["legal_compliance_issues"].append(conflict)
 
             # If no sections were found but we have recommendations, create sections from them
             if not suggestions["sections"] and suggestions["recommendations"]:
@@ -1489,10 +1590,21 @@ class DocumentAnalysisService:
                         term in rec.lower() for term in
                         ["kanun", "yasa", "law", "regulation", "mevzuat"])
 
+                    # Try to extract section reference from recommendation
+                    import re
+                    section_ref = f"Recommendation {i+1}"
+                    section_pattern = r'([Ss][Ee][Cc][Tt][Ii][Oo][Nn]|[Mm][Aa][Dd][Dd][Ee]|[Bb][Öö][Ll][Üü][Mm])\s+(\d+(\.\d+)*)'
+                    section_match = re.search(section_pattern, rec)
+
+                    if section_match:
+                        section_type = section_match.group(1)  # "Section", "Madde", etc.
+                        section_num = section_match.group(2)  # "4.2", "3", etc.
+                        section_ref = f"{section_type} {section_num}"
+
                     # Create a section from the recommendation itself
                     suggestions["sections"].append({
                         "chunk_index": 0,
-                        "section": f"Recommendation {i+1}",
+                        "section": section_ref,
                         "original_text": "",  # No specific text identified
                         "conflict": rec,  # Use recommendation as conflict too
                         "suggested_improvement": rec,
@@ -1501,10 +1613,9 @@ class DocumentAnalysisService:
                     })
 
                     # Add to appropriate categorized lists if not already there
-                    if is_policy and rec not in suggestions["policy_conflicts"]:
+                    if is_policy and not is_too_similar(rec, suggestions["policy_conflicts"]):
                         suggestions["policy_conflicts"].append(rec)
-                    if is_legal and rec not in suggestions[
-                            "legal_compliance_issues"]:
+                    if is_legal and not is_too_similar(rec, suggestions["legal_compliance_issues"]):
                         suggestions["legal_compliance_issues"].append(rec)
 
             return suggestions

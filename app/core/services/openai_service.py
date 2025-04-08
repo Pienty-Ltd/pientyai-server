@@ -388,6 +388,9 @@ class OpenAIService:
             - For each issue, state the current problematic term and then provide the EXACT required replacement text
             - Use direct, declarative language such as "MUST BE CHANGED TO" rather than "consider changing"
             - Reference specific sections, page numbers, or paragraph numbers when possible
+            - NEVER repeat the same information in multiple recommendations
+            - Each recommendation must cover a unique issue and should not overlap with other recommendations
+            - Use consistent formatting for all recommendations to improve readability
 
             REQUIRED RESPONSE FORMAT (JSON):
             {
@@ -401,8 +404,8 @@ class OpenAIService:
                 "CLAUSE X.Y.Z: Current delivery terms of N days VIOLATES standard policy. MUST BE CHANGED to M days."
               ],
               "recommendations": [
-                "REPLACE Section X.Y text from 'current problematic text' TO 'exact corrective text' to comply with company policy",
-                "CHANGE Clause X.Y.Z from 'current problematic text' TO 'exact corrective text' as required by policy"
+                "MADDE X.Y: 'Current problematic text' ifadesi, 'exact corrective text' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, [policy/requirement reference] ile uyum sağlamak amacıyla ZORUNLUDUR.",
+                "MADDE X.Y.Z: 'Current problematic text' ifadesi SÖZLEŞMEDEN TAMAMEN ÇIKARILMALIDIR. Çünkü bu ifade [explanation of why it should be removed]."
               ]
             }
 
@@ -452,6 +455,9 @@ class OpenAIService:
             - Present all findings as MANDATORY corrections
             - For each issue, provide both the problematic text AND the required replacement text
             - Use decisive language such as "MUST", "REQUIRED", "CHANGE TO"
+            - NEVER REPEAT the same recommendation in multiple places
+            - Each recommendation should be UNIQUE and include specific details
+            - Format each recommendation clearly with: MADDE section: 'current text' to be changed to 'new text' because of [reason]
             
             CRITICAL FOCUS AREAS:
             - Payment terms (ödeme koşulları)
