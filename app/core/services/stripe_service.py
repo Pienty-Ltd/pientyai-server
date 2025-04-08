@@ -218,7 +218,15 @@ class StripeService:
                 
             checkout_session = stripe.checkout.Session.create(**session_data)
             logger.info(f"Created Checkout Session: {checkout_session.id}")
-            return checkout_session
+            
+            # Return a dictionary with the necessary information
+            return {
+                'id': checkout_session.id,
+                'url': checkout_session.url,
+                'status': checkout_session.status,
+                'customer_email': checkout_session.customer_email,
+                'payment_status': checkout_session.payment_status
+            }
             
         except stripe.error.StripeError as e:
             logger.error(f"Stripe error creating Checkout Session: {str(e)}")

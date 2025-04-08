@@ -133,12 +133,24 @@ async def create_checkout_session(
                 error=ErrorResponse(message="Failed to create checkout session")
             )
         
+        # Create comprehensive response with all available data
+        response_data = {
+            "checkout_url": checkout_session.get('url', ''),
+            "session_id": checkout_session.get('id', ''),
+            "status": checkout_session.get('status', ''),
+            "payment_status": checkout_session.get('payment_status', ''),
+            "customer_email": checkout_session.get('customer_email', current_user.email)
+        }
+        
+        # Ensure we've got the important data
+        if not response_data["checkout_url"] or not response_data["session_id"]:
+            logger.warning(f"Missing critical data in checkout session: {checkout_session}")
+            
+        logger.info(f"Checkout session created with data: {response_data}")
+            
         return BaseResponse(
             success=True,
-            data={
-                "checkout_url": checkout_session['url'],
-                "session_id": checkout_session['id']
-            },
+            data=response_data,
             message="Checkout session created successfully"
         )
     
