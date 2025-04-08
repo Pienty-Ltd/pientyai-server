@@ -95,11 +95,21 @@ async def stripe_webhook(
 
         # Verify webhook signature
         try:
+            if config.STRIPE_TEST_MODE:
+                webhook_secret = config.STRIPE_TEST_WEBHOOK_SECRET
+            else:
+                webhook_secret = config.STRIPE_LIVE_WEBHOOK_SECRET
+                
+            if not webhook_secret:
+                raise ValueError("Stripe webhook secret not configured")
+                
             event = stripe.Webhook.construct_event(
                 payload,
                 signature,
-                config.STRIPE_WEBHOOK_SECRET
+                str(webhook_secret)
             )
+            # Log which mode we're using (for debugging purposes)
+            logger.info(f"Using Stripe in {'TEST' if config.STRIPE_TEST_MODE else 'PRODUCTION'} mode")
             logger.info(f"Successfully verified webhook signature for event: {event.type}")
         except stripe.error.SignatureVerificationError as e:
             logger.error(f"Invalid Stripe signature: {str(e)}")

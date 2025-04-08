@@ -35,15 +35,20 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     # Stripe Configuration
+    STRIPE_TEST_MODE = os.getenv("STRIPE_TEST_MODE", "true").lower() == "true"
+
+    # Stripe API Keys
     STRIPE_TEST_PUBLIC_KEY = os.getenv("STRIPE_TEST_PUBLIC_KEY")
     STRIPE_TEST_SECRET_KEY = os.getenv("STRIPE_TEST_SECRET_KEY")
     STRIPE_LIVE_PUBLIC_KEY = os.getenv("STRIPE_LIVE_PUBLIC_KEY")
     STRIPE_LIVE_SECRET_KEY = os.getenv("STRIPE_LIVE_SECRET_KEY")
 
-    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_LIVE_WEBHOOK_SECRET")
-    STRIPE_PRICE_ID = os.getenv("STRIPE_LIVE_PRICE_ID")
-
+    # Stripe Webhook Secrets
+    STRIPE_LIVE_WEBHOOK_SECRET = os.getenv("STRIPE_LIVE_WEBHOOK_SECRET")
     STRIPE_TEST_WEBHOOK_SECRET = os.getenv("STRIPE_TEST_WEBHOOK_SECRET")
+
+    # Stripe Price IDs
+    STRIPE_LIVE_PRICE_ID = os.getenv("STRIPE_LIVE_PRICE_ID")
     STRIPE_TEST_PRICE_ID = os.getenv("STRIPE_TEST_PRICE_ID")
 
 

@@ -94,8 +94,11 @@ async def create_checkout_session(
     try:
         stripe_service = StripeService.get_instance()
         
-        # Use the default price ID if none provided
-        price_id = request.price_id or config.STRIPE_PRICE_ID
+        # Use the default price ID based on test mode if none provided
+        if config.STRIPE_TEST_MODE:
+            price_id = request.price_id or config.STRIPE_TEST_PRICE_ID
+        else:
+            price_id = request.price_id or config.STRIPE_LIVE_PRICE_ID
         
         # Prepare metadata for the checkout session
         metadata = {
@@ -105,11 +108,13 @@ async def create_checkout_session(
             "subscription_create": "true"
         }
         
-        # Create checkout session
         # Make sure price_id is always a string to fix LSP issue
         # Also handle the case where price_id might be None
         if price_id is None:
-            price_id = config.STRIPE_PRICE_ID
+            if config.STRIPE_TEST_MODE:
+                price_id = config.STRIPE_TEST_PRICE_ID
+            else:
+                price_id = config.STRIPE_LIVE_PRICE_ID
             
         if not price_id:
             logger.error("No price_id provided or configured in environment")

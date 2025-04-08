@@ -14,17 +14,17 @@ class StripeService:
 
     def __init__(self):
         """Initialize Stripe configuration"""
-        self.is_production = config.API_PRODUCTION
+        self.is_test_mode = config.STRIPE_TEST_MODE
         
         # Initialize key variables with safety checks
-        if self.is_production:
-            self.public_key = config.STRIPE_LIVE_PUBLIC_KEY
-            api_key = config.STRIPE_LIVE_SECRET_KEY
-            env_type = "PRODUCTION"
-        else:
+        if self.is_test_mode:
             self.public_key = config.STRIPE_TEST_PUBLIC_KEY
             api_key = config.STRIPE_TEST_SECRET_KEY
             env_type = "TEST"
+        else:
+            self.public_key = config.STRIPE_LIVE_PUBLIC_KEY
+            api_key = config.STRIPE_LIVE_SECRET_KEY
+            env_type = "PRODUCTION"
             
         # Verify we have the required keys
         if not api_key:
