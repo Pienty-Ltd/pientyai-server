@@ -1,0 +1,50 @@
+{
+  "recommendations": [
+    "MADDE ÖDEME GECİKMELERİ: 'Bayilerin geciken ödemeleri için KSB tarafından Güncel banka kredi faiz oranlarına göre ceza uygulanır.' ifadesi, 'Fatura bedeli üzerinden aylık %3 vade farkı uygulanır.' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, KSB Turkiye Genel Satış Koşulları'nın ilgili bölümündeki ödeme gecikmesi politikasıyla (KB; 1. paragraf) uyum sağlamak amacıyla ZORUNLUDUR.",
+    "MADDE SÖZLEŞMENİN FESHİ: 'KSB’nin, alıcıya 100.000 TL ödemesi gerekmektedir.' ifadesi SÖZLEŞMEDEN TAMAMEN ÇIKARILMALIDIR. Çünkü KB'de böyle bir ödeme yükümlülüğü öngörülmemekte olup, bu ifade şirket menfaatlerine aykırı ek bir mali yük getirmektedir.",
+    "MADDE TESLİMAT ŞARTLARI: 'Ürünlerin teslim yeri KSB’nin Ankara Fabrikası veya İstanbul deposudur.' ifadesi, 'Ürünlerin teslim yeri KSB’nin Ankara Fabrikasıdır.' olarak DEĞİŞTİRİLMELİDİR. Bu düzeltme, KB'deki sabit teslimat yeri uygulaması (KB; Teslimat, Ödeme Şartları) ile uyum sağlamak amacıyla ZORUNLUDUR.",
+    "MADDE GECİKME CEZALARI: 'Teslimatlarda kaynaklı gecikme cezası: KSB’ye sipariş öncesinde gecikme cezası oran ve şartlarının yazılı olarak bildirilmiş ve KSB tarafından da onaylanarak teyit edilmiş olması durumunda onaylanan şartlara göre uygulanabilir. Aksi durumda böyle bir ceza talebinde bulunulamaz.' ifadesi, 'Siparişin hazırlanması ve tesliminde yaşanan gecikmeler için, fatura bedeli üzerinden günlük %0,1 depolama ücreti uygulanır.' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik KB (Sevkiyat Kapsamı) şartlarıyla uyum sağlamak için zorunludur."
+  ],
+  "sections": [
+    {
+      "chunk_index": 0,
+      "section": "Unspecified section",
+      "original_text": "",
+      "conflict": "Ödeme Gecikmeleri: 'Bayilerin geciken ödemeleri için KSB tarafından Güncel banka kredi faiz oranlarına göre ceza uygulanır.' ifadesi KB'deki 'fatura bedeli üzerinden aylık %3 vade farkı uygulanır.' şartına uymamaktadır.",
+      "suggested_improvement": "MADDE ÖDEME GECİKMELERİ: 'Bayilerin geciken ödemeleri için KSB tarafından Güncel banka kredi faiz oranlarına göre ceza uygulanır.' ifadesi, 'Fatura bedeli üzerinden aylık %3 vade farkı uygulanır.' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, KSB Turkiye Genel Satış Koşulları'nın ilgili bölümündeki ödeme gecikmesi politikasıyla (KB; 1. paragraf) uyum sağlamak amacıyla ZORUNLUDUR.",
+      "is_policy_conflict": false,
+      "is_legal_issue": false
+    },
+    {
+      "chunk_index": 0,
+      "section": "Unspecified section",
+      "original_text": "",
+      "conflict": "Sözleşmenin Feshi Paragrafı: 'KSB’nin, alıcıya 100.000 TL ödemesi gerekmektedir.' ifadesi KB standartlarında yer almayan, fazladan ve uygunsuz bir ödeme yükümlülüğü getirir.",
+      "suggested_improvement": "MADDE ÖDEME GECİKMELERİ: 'Bayilerin geciken ödemeleri için KSB tarafından Güncel banka kredi faiz oranlarına göre ceza uygulanır.' ifadesi, 'Fatura bedeli üzerinden aylık %3 vade farkı uygulanır.' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, KSB Turkiye Genel Satış Koşulları'nın ilgili bölümündeki ödeme gecikmesi politikasıyla (KB; 1. paragraf) uyum sağlamak amacıyla ZORUNLUDUR.",
+      "is_policy_conflict": true,
+      "is_legal_issue": false
+    },
+    {
+      "chunk_index": 0,
+      "section": "Unspecified section",
+      "original_text": "",
+      "conflict": "Teslimat Şartları: 'Ürünlerin teslim yeri KSB’nin Ankara Fabrikası veya İstanbul deposudur.' ifadesi KB'deki 'Ürünler Ankara fabrikamız teslim' ilkesine aykırıdır.",
+      "suggested_improvement": "Teslimat Şartları: 'Ürünlerin teslim yeri KSB’nin Ankara Fabrikası veya İstanbul deposudur.' ifadesi KB'deki 'Ürünler Ankara fabrikamız teslim' ilkesine aykırıdır.",
+      "is_policy_conflict": false,
+      "is_legal_issue": false
+    },
+    {
+      "chunk_index": 0,
+      "section": "Unspecified section",
+      "original_text": "",
+      "conflict": "Gecikme Cezaları: 'Teslimatlarda kaynaklı gecikme cezası: KSB’ye sipariş öncesinde gecikme cezası oran ve şartlarının yazılı olarak bildirilmiş ve KSB tarafından da onaylanarak teyit edilmiş olması durumunda onaylanan şartlara göre uygulanabilir. Aksi durumda böyle bir ceza talebinde bulunulamaz.' ifadesi KB'de öngörülen otomatik uygulama şartı (sipariş bedelinin günlük %0,1’i oranında depolama ücreti) ile uyuşmamaktadır.",
+      "suggested_improvement": "MADDE ÖDEME GECİKMELERİ: 'Bayilerin geciken ödemeleri için KSB tarafından Güncel banka kredi faiz oranlarına göre ceza uygulanır.' ifadesi, 'Fatura bedeli üzerinden aylık %3 vade farkı uygulanır.' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, KSB Turkiye Genel Satış Koşulları'nın ilgili bölümündeki ödeme gecikmesi politikasıyla (KB; 1. paragraf) uyum sağlamak amacıyla ZORUNLUDUR.",
+      "is_policy_conflict": false,
+      "is_legal_issue": false
+    }
+  ],
+  "policy_conflicts": [
+    "Sözleşmenin Feshi Paragrafı: 'KSB’nin, alıcıya 100.000 TL ödemesi gerekmektedir.' ifadesi KB standartlarında yer almayan, fazladan ve uygunsuz bir ödeme yükümlülüğü getirir."
+  ],
+  "legal_compliance_issues": []
+}
