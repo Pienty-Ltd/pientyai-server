@@ -92,6 +92,18 @@ class SubscriptionRepository:
                 
         return False, subscription_data
         
+    async def check_subscription_active(self, user_id: int) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Check if user has an active subscription (alias for check_subscription_status)
+        This method is an alias of check_subscription_status to maintain API compatibility.
+        
+        Returns:
+            Tuple[bool, Dict[str, Any]]: 
+                - First value: True if subscription is active, False otherwise
+                - Second value: Subscription details dictionary
+        """
+        return await self.check_subscription_status(user_id)
+        
     async def create_subscription(
         self,
         user_id: int,

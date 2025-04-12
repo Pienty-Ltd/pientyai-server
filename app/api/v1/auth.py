@@ -156,6 +156,14 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             
         # Mark invitation code as used
         await invitation_repo.mark_as_used(request.invitation_code, user.id)
+        
+        # Create a trial subscription for the new user
+        subscription_repo = SubscriptionRepository(db)
+        trial_subscription = await subscription_repo.create_trial_subscription(user.id)
+        if not trial_subscription:
+            logger.warning(f"Failed to create trial subscription for user: {user.email}")
+            # Continue with the registration process even if subscription creation fails
+            # This will be handled later when the user tries to access subscription-based features
 
         # Cache user data
         user_cache_data = {
@@ -166,6 +174,15 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             "role": user.role.value,
             "id": user.id
         }
+        
+        # Add subscription data to cache
+        if trial_subscription:
+            is_active, subscription_data = await subscription_repo.check_subscription_active(user.id)
+            if is_active:
+                user_cache_data["subscription_status"] = subscription_data.get("subscription_status")
+                if "trial_end" in subscription_data:
+                    user_cache_data["trial_end"] = subscription_data.get("trial_end")
+        
         await cache_user_data(user_cache_data)
 
         # Generate token pair
@@ -215,6 +232,18 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             "role": user.role.value,
             "id": user.id
         }
+        
+        # Add subscription status to cache
+        subscription_repo = SubscriptionRepository(db)
+        if user.id:
+            is_active, subscription_data = await subscription_repo.check_subscription_active(user.id)
+            if is_active:
+                user_cache_data["subscription_status"] = subscription_data.get("subscription_status")
+                if "trial_end" in subscription_data:
+                    user_cache_data["trial_end"] = subscription_data.get("trial_end")
+                elif "subscription_end" in subscription_data:
+                    user_cache_data["subscription_end"] = subscription_data.get("subscription_end")
+        
         await cache_user_data(user_cache_data)
 
         # Generate token pair
@@ -274,6 +303,29 @@ async def refresh_token(
                 }
             )
 
+        # Cache user data with subscription info
+        user_cache_data = {
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_active": user.is_active,
+            "fp": user.fp,
+            "role": user.role.value,
+            "id": user.id
+        }
+        
+        # Add subscription status to cache
+        subscription_repo = SubscriptionRepository(db)
+        if user.id:
+            is_active, subscription_data = await subscription_repo.check_subscription_active(user.id)
+            if is_active:
+                user_cache_data["subscription_status"] = subscription_data.get("subscription_status")
+                if "trial_end" in subscription_data:
+                    user_cache_data["trial_end"] = subscription_data.get("trial_end")
+                elif "subscription_end" in subscription_data:
+                    user_cache_data["subscription_end"] = subscription_data.get("subscription_end")
+        
+        await cache_user_data(user_cache_data)
+        
         # Generate new token pair
         access_token, refresh_token = create_tokens(data={
             "sub": user.email,
@@ -319,14 +371,31 @@ def admin_required(user = Depends(get_current_user)):
 @router.get("/me", response_model=BaseResponse[dict],
            summary="Get current user",
            description="Get details of currently authenticated user")
-async def get_user_me(request: Request, current_user=Depends(get_current_user)):
+async def get_user_me(request: Request, 
+                     current_user=Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
     """
     Get current authenticated user's details:
     - email: User's email
     - full_name: User's full name
     - is_active: Account status
     - role: User role (admin/user)
+    - subscription: Subscription status and details
     """
+    # Get user's subscription status
+    subscription_repo = SubscriptionRepository(db)
+    subscription_info = None
+    
+    if current_user.id:
+        subscription = await subscription_repo.get_user_subscription(current_user.id)
+        if subscription:
+            is_active, subscription_data = await subscription_repo.check_subscription_active(current_user.id)
+            subscription_info = {
+                "status": subscription.status.value,
+                "is_active": is_active,
+                **subscription_data
+            }
+    
     return BaseResponse.from_request(
         request=request,
         data={
@@ -334,7 +403,8 @@ async def get_user_me(request: Request, current_user=Depends(get_current_user)):
             "full_name": current_user.full_name,
             "is_active": current_user.is_active,
             "fp": current_user.fp,
-            "role": getattr(current_user, 'role', UserRole.USER)
+            "role": getattr(current_user, 'role', UserRole.USER),
+            "subscription": subscription_info
         },
         message="User details retrieved successfully"
     )
