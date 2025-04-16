@@ -464,15 +464,25 @@ class OpenAIService:
 
                     try:
                         analysis_result = json.loads(response_content)
+                        
+                        # Eğer eski formatta yanıt döndüyse, yeni formata dönüştür
+                        if "diff_changes" not in analysis_result:
+                            # Sadece diff_changes formatını kullan, diğer tüm alanları yoksay
+                            return {
+                                "diff_changes": analysis_result.get("diff", ""),
+                                "processing_time_seconds": response.usage.total_tokens / 1000,  # Yaklaşık işlem süresi
+                                "total_chunks_analyzed": len(knowledge_base_chunks)
+                            }
+                        
                         return analysis_result
                     except json.JSONDecodeError as e:
                         logger.error(f"Error parsing JSON response: {str(e)}")
                         # If JSON parsing fails, return the raw content in a structured format
+                        # Hata durumunda sadece diff_changes alanını döndür
                         return {
-                            "diff_changes":
-                            "Error parsing AI response as JSON. Raw response included.",
-                            "raw_response": response_content,
-                            "error": str(e)
+                            "diff_changes": "Error: " + str(e) + "\n\nRaw response: " + response_content,
+                            "processing_time_seconds": response.usage.total_tokens / 1000,
+                            "total_chunks_analyzed": len(knowledge_base_chunks)
                         }
 
                 except Exception as e:
@@ -505,9 +515,9 @@ class OpenAIService:
             error_msg = f"Error in document analysis: {str(e)}"
             logger.error(error_msg, exc_info=True)
             
-            # Return a structured error response that can be used by the calling function
+            # Return a structured error response with only diff_changes format
             return {
                 "diff_changes": f"Analysis failed: {error_msg}",
-                "error": error_msg,
-                "error_type": type(e).__name__
+                "processing_time_seconds": 0.0,
+                "total_chunks_analyzed": len(knowledge_base_chunks) if 'knowledge_base_chunks' in locals() else 0
             }

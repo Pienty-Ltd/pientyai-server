@@ -1299,14 +1299,8 @@ class DocumentAnalysisService:
                     logger.error(f"Analysis record not found: {analysis_id}")
                     return
 
-                # Update the analysis record with the diff changes
+                # Update the analysis record with only diff changes
                 analysis.diff_changes = analysis_data.get("diff_changes", "")
-                
-                # Keep legacy fields for backward compatibility
-                analysis.analysis = analysis_data.get("analysis", "")
-                analysis.key_points = analysis_data.get("key_points", [])
-                analysis.conflicts = analysis_data.get("conflicts", [])
-                analysis.recommendations = analysis_data.get("recommendations", [])
                 
                 analysis.chunk_analyses = analysis_data.get("chunk_analyses", [])
                 analysis.total_chunks_analyzed = analysis_data.get("total_chunks_analyzed", 0)
@@ -1344,14 +1338,8 @@ class DocumentAnalysisService:
                         f"Analysis record not found with fp: {analysis_fp}")
                     return
 
-                # Update the analysis record with the diff changes
+                # Update the analysis record with only diff changes
                 analysis.diff_changes = analysis_data.get("diff_changes", "")
-                
-                # Keep legacy fields for backward compatibility
-                analysis.analysis = analysis_data.get("analysis", "")
-                analysis.key_points = analysis_data.get("key_points", [])
-                analysis.conflicts = analysis_data.get("conflicts", [])
-                analysis.recommendations = analysis_data.get("recommendations", [])
                 
                 analysis.chunk_analyses = analysis_data.get("chunk_analyses", [])
                 analysis.total_chunks_analyzed = analysis_data.get("total_chunks_analyzed", 0)

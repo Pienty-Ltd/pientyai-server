@@ -200,13 +200,8 @@ class DocumentAnalysis(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
-    # Analiz Sonuçları
+    # Analiz Sonuçları - Sadece diff değişiklikleri formatında
     diff_changes = Column(Text, nullable=True)  # Git-like diff changes
-    # Legacy fields - kept for backward compatibility
-    analysis = Column(Text, nullable=True)  # Genel analiz sonucu (legacy)
-    key_points = Column(JSON, nullable=True)  # Önemli noktalar (legacy)
-    conflicts = Column(JSON, nullable=True)  # Çelişkiler (legacy)
-    recommendations = Column(JSON, nullable=True)  # Öneriler (legacy)
     
     # Gerçekleştirme Bilgileri
     status = Column(Enum(AnalysisStatus), nullable=False, default=AnalysisStatus.PENDING)
