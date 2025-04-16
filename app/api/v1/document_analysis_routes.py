@@ -128,6 +128,7 @@ async def analyze_document(
                 fp=analysis_record.fp,
                 document_fp=document.fp,
                 organization_fp=organization.fp,
+                diff_changes="", # New field for git-like diff changes
                 analysis="Analysis in progress...",
                 key_points=[],
                 conflicts=[],
@@ -357,10 +358,11 @@ async def get_analysis_detail(
                 fp=analysis.fp,
                 document_fp=document.fp if document else "",
                 organization_fp=organization_fp,
-                analysis=analysis.analysis or "",  # Ensure analysis is never None
-                key_points=analysis.key_points or [],
-                conflicts=analysis.conflicts or [],
-                recommendations=analysis.recommendations or [],
+                diff_changes=analysis.diff_changes or "",  # New git-like diff changes field
+                analysis=analysis.analysis or "",  # Legacy field - Ensure analysis is never None
+                key_points=analysis.key_points or [],  # Legacy field
+                conflicts=analysis.conflicts or [],  # Legacy field
+                recommendations=analysis.recommendations or [],  # Legacy field
                 total_chunks_analyzed=analysis.total_chunks_analyzed or 0,
                 processing_time_seconds=float(analysis.processing_time_seconds) if analysis.processing_time_seconds else 0.0,
                 chunk_analyses=analysis.chunk_analyses or [],

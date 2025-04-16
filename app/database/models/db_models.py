@@ -201,10 +201,12 @@ class DocumentAnalysis(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Analiz Sonuçları
-    analysis = Column(Text, nullable=True)  # Genel analiz sonucu
-    key_points = Column(JSON, nullable=True)  # Önemli noktalar
-    conflicts = Column(JSON, nullable=True)  # Çelişkiler
-    recommendations = Column(JSON, nullable=True)  # Öneriler
+    diff_changes = Column(Text, nullable=True)  # Git-like diff changes
+    # Legacy fields - kept for backward compatibility
+    analysis = Column(Text, nullable=True)  # Genel analiz sonucu (legacy)
+    key_points = Column(JSON, nullable=True)  # Önemli noktalar (legacy)
+    conflicts = Column(JSON, nullable=True)  # Çelişkiler (legacy)
+    recommendations = Column(JSON, nullable=True)  # Öneriler (legacy)
     
     # Gerçekleştirme Bilgileri
     status = Column(Enum(AnalysisStatus), nullable=False, default=AnalysisStatus.PENDING)

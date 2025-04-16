@@ -356,74 +356,56 @@ class OpenAIService:
             knowledge_base_chunks: List of dictionaries containing relevant knowledge base chunks with metadata
             
         Returns:
-            Dictionary containing the comprehensive analysis result
+            Dictionary containing the comprehensive analysis result with git-like diff changes
         """
         try:
             if not config.OPENAI_API_KEY:
                 logger.error("OpenAI API key is not configured")
                 return {
-                    "analysis":
-                    "Error: OpenAI API key is not configured",
-                    "key_points": [],
-                    "conflicts": [],
-                    "recommendations":
-                    ["Configure OpenAI API key to enable document analysis"]
+                    "diff_changes": "Error: OpenAI API key is not configured"
                 }
 
-            logger.info("Starting document analysis with OpenAI API")
+            logger.info("Starting document analysis with OpenAI API using GPT-4.1")
 
-            # Construct an extremely detailed and precise prompt for legal document analysis
-            system_prompt = """You are an expert legal document analysis AI specializing in commercial contract analysis, trade law compliance, and corporate policy enforcement. Your primary task is to perform a meticulous and comprehensive analysis of the provided document, using the knowledge base information as authoritative reference material.
+            # Construct a prompt for git-like diff analysis of legal documents
+            system_prompt = """You are an expert legal document analysis AI specializing in analyzing documents and providing git-like diff changes. Your task is to analyze the provided document and identify sections that need to be changed based on the knowledge base information.
 
-            YOUR CORE RESPONSIBILITIES:
-            1. LEGAL COMPLIANCE VERIFICATION: Meticulously check if the document complies with relevant commercial laws, trade regulations, and legal requirements of the applicable jurisdiction. Cite specific laws when relevant.
-            2. POLICY CONTRADICTION DETECTION: Identify EACH AND EVERY TERM that contradicts company policies found in the knowledge base. 
-            3. INTEREST PROTECTION: Find ALL specific instances where contract terms deviate from company interests (e.g., payment terms, liability limitations, interest rates, penalty clauses, etc.)
-            4. RISK ANALYSIS: Detect any clause that creates potential legal, financial, or operational risks for the company.
-            5. REQUIRED CHANGES: For each identified conflict or issue, provide SPECIFIC CORRECTIVE TEXT that MUST be implemented to comply with company policy.
+            YOUR CORE RESPONSIBILITY:
+            Generate a git-like diff output showing exactly what should be changed in the provided document. The diff should be in the same format as the original document but show:
+            1. Deletions: Text that should be removed from the document (in red, marked with '-')
+            2. Additions: Text that should be added to the document (in green, marked with '+')
 
             ANALYSIS METHODOLOGY:
             - Compare each section of the document against relevant knowledge base entries
-            - Do NOT just suggest changes - state definitive corrections that NEED to be made
-            - For each issue, state the current problematic term and then provide the EXACT required replacement text
-            - Use direct, declarative language such as "MUST BE CHANGED TO" rather than "consider changing"
-            - Reference specific sections, page numbers, or paragraph numbers when possible
-            - NEVER repeat the same information in multiple recommendations
-            - Each recommendation must cover a unique issue and should not overlap with other recommendations
-            - Use consistent formatting for all recommendations to improve readability
+            - For each issue, identify the exact text that needs to be changed
+            - Use the exact same formatting, language, and style as the original document
+            - Make sure the diff can be directly applied to the original document
+            - Preserve section numbers, formatting, and document structure
 
             REQUIRED RESPONSE FORMAT (JSON):
             {
-              "analysis": "Comprehensive analysis focusing on compliance and policy alignment, written in precise language appropriate for legal professionals",
-              "key_points": [
-                "Detailed key point 1 with exact section reference",
-                "Detailed key point 2 focusing on material terms"
-              ],
-              "conflicts": [
-                "SECTION X.Y: Current interest rate of Z% DOES NOT COMPLY with company policy. MUST BE CHANGED to A%.",
-                "CLAUSE X.Y.Z: Current delivery terms of N days VIOLATES standard policy. MUST BE CHANGED to M days."
-              ],
-              "recommendations": [
-                "MADDE X.Y: 'Current problematic text' ifadesi, 'exact corrective text' olarak DEĞİŞTİRİLMELİDİR. Bu değişiklik, [policy/requirement reference] ile uyum sağlamak amacıyla ZORUNLUDUR.",
-                "MADDE X.Y.Z: 'Current problematic text' ifadesi SÖZLEŞMEDEN TAMAMEN ÇIKARILMALIDIR. Çünkü bu ifade [explanation of why it should be removed]."
-              ]
+              "diff_changes": "The complete diff output in the format of the original document with deletions and additions marked"
             }
 
+            DIFF MARKING FORMAT:
+            When generating the diff:
+            - Lines that should be removed should start with '-' 
+            - Lines that should be added should start with '+'
+            - Context lines (unchanged) should be included without any prefix
+            - Make sure the diff is comprehensive and covers the entire document
+            - Ensure the output maintains the original document's structure and formatting
+
             CRITICAL INSTRUCTIONS:
-            - BE EXTREMELY DECISIVE - All identified issues REQUIRE correction, not suggestions
-            - PROVIDE EXACT REPLACEMENT TEXT - Don't just identify problems, provide precise corrective text
-            - USE IMPERATIVE LANGUAGE - Use terms like "MUST", "REQUIRED", "CHANGE TO", rather than "should consider"
-            - CITE REFERENCES - When identifying conflicts, cite the specific company policy or legal requirement
             - MATCH DOCUMENT LANGUAGE - Detect the language of the input document and respond in EXACTLY the same language
             - For Turkish documents, respond in Turkish. For English documents, respond in English, etc.
-            - FORMAT CONSISTENTLY - Keep all section references in consistent format (e.g., "Section 4.2" or "Madde 4.2")
+            - FORMAT CONSISTENTLY - Keep all section references in the same format as the original document
+            - Include enough context around each change to clearly identify where in the document the change should be made
+            - Make sure the output is valid and can be directly applied to the original document
             
-            REMEMBER: Your analysis will be used to make immediate corrections to legal documents. 
-            You must provide precise, definitive changes that MUST be implemented, not mere suggestions.
+            REMEMBER: The output will be used to show git-like changes to the document.
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
-            # Add a note about chunk count to the KB chunks to help with processing
             kb_chunks_with_note = {
                 "total_kb_chunks": len(knowledge_base_chunks),
                 "kb_chunks": knowledge_base_chunks
@@ -431,61 +413,40 @@ class OpenAIService:
             kb_chunks_json = json.dumps(kb_chunks_with_note, ensure_ascii=False, indent=2)
             
             user_message = f"""
-            ## KNOWLEDGE BASE CONTEXT (KURUMSAL POLİTİKA VE MEVZUAT BİLGİLERİ - JSON OBJECT):
+            ## KNOWLEDGE BASE CONTEXT (REFERENCE INFORMATION - JSON OBJECT):
             ```json
             {kb_chunks_json}
             ```
             
-            ## DOCUMENT TO ANALYZE (ANALİZ EDİLECEK BELGE):
+            ## DOCUMENT TO ANALYZE:
             {document_chunk}
             
-            DETAILED ANALYSIS INSTRUCTIONS:
+            DETAILED INSTRUCTIONS:
             1. Review all {len(knowledge_base_chunks)} knowledge base chunks in the data
-            2. Perform a thorough comparison between the document and ALL knowledge base entries
-            3. Identify EACH NUMBER, PERCENTAGE, DATE, TIMEFRAME or SPECIFIC TERM that does not match company policy
-            4. For each issue found, specify EXACT section references (e.g., "Section 3.2.1" or "Madde 5.4")
-            5. Whenever you identify a problem:
-               - Quote the EXACT problematic text
-               - State the EXACT replacement text that MUST be used instead
-               - Explain why the change is mandatory (which policy it violates)
-            6. For each identified issue, use language like "MUST BE CHANGED TO", not suggestions
+            2. Compare the document with the knowledge base entries to identify necessary changes
+            3. Create a git-like diff that shows:
+               - Text that should be removed (marked with '-')
+               - Text that should be added (marked with '+')
+            4. The diff should maintain the original document's format and structure
+            5. Make sure the diff can be directly applied to the original document
             
-            CRITICAL REQUIREMENTS:
-            - DO NOT present analysis as recommendations or suggestions 
-            - Present all findings as MANDATORY corrections
-            - For each issue, provide both the problematic text AND the required replacement text
-            - Use decisive language such as "MUST", "REQUIRED", "CHANGE TO"
-            - NEVER REPEAT the same recommendation in multiple places
-            - Each recommendation should be UNIQUE and include specific details
-            - Format each recommendation clearly with: MADDE section: 'current text' to be changed to 'new text' because of [reason]
+            OUTPUT REQUIREMENTS:
+            - Generate ONLY a comprehensive diff with additions and deletions clearly marked
+            - Do NOT include explanations, justifications, or commentary outside the diff itself
+            - Follow git-diff format: unchanged lines have no prefix, deleted lines start with '-', added lines start with '+'
+            - Make all changes in the EXACT same format and language as the original document
+            - Ensure the diff covers ALL necessary changes based on the knowledge base information
             
-            CRITICAL FOCUS AREAS:
-            - Payment terms (ödeme koşulları)
-            - Interest rates (faiz oranları)
-            - Late payment penalties (gecikme cezaları)
-            - Contract duration (sözleşme süresi)
-            - Notice periods (bildirim süreleri)
-            - Jurisdiction clauses (yargı yeri maddeleri)
-            - Liability limitations (sorumluluk sınırlamaları)
-            - Termination conditions (fesih koşulları)
-            - Warranty periods (garanti süreleri)
-            - Delivery timeframes (teslimat süreleri)
-            
-            Find EVERY SINGLE INSTANCE where the document differs from the company's standard terms.
-            All identified discrepancies MUST be changed to comply with company policy.
-            
-            Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology.
+            Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology and formatting.
             """
 
             retry_count = 0
             while retry_count < self.MAX_RETRIES:
                 try:
                     # Run the synchronous API call in a thread pool to avoid blocking
-                    # O3-mini model has specific requirements - it doesn't support max_tokens or temperature
-                    # Only pass the parameters it accepts to avoid API errors
                     response = await asyncio.to_thread(
                         self.client.chat.completions.create,
-                        model="o3-mini",  # Using the specified o3-mini model
+                        model="gpt-4.1",  # Using GPT-4.1 model instead of o3-mini
                         messages=[{
                             "role": "system",
                             "content": system_prompt
@@ -508,7 +469,7 @@ class OpenAIService:
                         logger.error(f"Error parsing JSON response: {str(e)}")
                         # If JSON parsing fails, return the raw content in a structured format
                         return {
-                            "analysis":
+                            "diff_changes":
                             "Error parsing AI response as JSON. Raw response included.",
                             "raw_response": response_content,
                             "error": str(e)
@@ -546,10 +507,7 @@ class OpenAIService:
             
             # Return a structured error response that can be used by the calling function
             return {
-                "analysis": f"Analysis failed: {error_msg}",
-                "key_points": [],
-                "conflicts": [],
-                "recommendations": ["Contact support if this issue persists."],
+                "diff_changes": f"Analysis failed: {error_msg}",
                 "error": error_msg,
                 "error_type": type(e).__name__
             }

@@ -28,10 +28,13 @@ class DocumentAnalysisResponse(BaseModel):
     fp: str = Field(..., description="Unique fingerprint identifier for the analysis")
     document_fp: str = Field(..., description="Document fingerprint (fp)")
     organization_fp: str = Field(..., description="Organization fingerprint (fp)")
-    analysis: str = Field("", description="Overall analysis of the document")
-    key_points: List[str] = Field([], description="Key points identified in the document")
-    conflicts: List[str] = Field([], description="Potential conflicts with existing documents")
-    recommendations: List[str] = Field([], description="Recommended actions based on the analysis")
+    # New git-like diff changes field
+    diff_changes: Optional[str] = Field("", description="Git-like diff changes showing additions (green) and deletions (red)")
+    # Legacy fields kept for backward compatibility
+    analysis: str = Field("", description="Overall analysis of the document (legacy)")
+    key_points: List[str] = Field([], description="Key points identified in the document (legacy)")
+    conflicts: List[str] = Field([], description="Potential conflicts with existing documents (legacy)")
+    recommendations: List[str] = Field([], description="Recommended actions based on the analysis (legacy)")
     total_chunks_analyzed: int = Field(..., description="Total number of chunks analyzed")
     processing_time_seconds: float = Field(..., description="Total processing time in seconds")
     chunk_analyses: List[Dict[str, Any]] = Field([], description="Individual analyses for each chunk")
