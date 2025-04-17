@@ -23,6 +23,30 @@ class OpenAIService:
     def __init__(self):
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         
+    async def get_api_info(self) -> Dict[str, str]:
+        """
+        Test the OpenAI API connection and return API information.
+        This is useful for verifying if the API key is valid.
+        
+        Returns:
+            Dict with API status information
+        """
+        try:
+            # Just a simple call to get models to verify connection
+            models = self.client.models.list()
+            return {
+                "status": "connected",
+                "models_available": str(len(models.data)),
+                "first_model": models.data[0].id if models.data else "none"
+            }
+        except Exception as e:
+            logger.error(f"Failed to connect to OpenAI API: {str(e)}")
+            # Don't raise, just return error info
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+        
     async def get_embedding(self, text: str) -> List[float]:
         """
         Create embedding for a single text string
