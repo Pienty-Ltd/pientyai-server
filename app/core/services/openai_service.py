@@ -57,21 +57,45 @@ class OpenAIService:
         Returns:
             The embedding vector as a list of floats
         """
+        # Metin boş ise veya None ise varsayılan bir vektör döndür
+        if not text or len(text.strip()) == 0:
+            logger.warning("Empty text provided for embedding generation")
+            return [0.0] * 1536  # Ada-002 has 1536 dimensions
+            
         try:
             retry_count = 0
             
+            # API anahtarını kontrol et
+            if not config.OPENAI_API_KEY:
+                logger.error("OpenAI API key is not configured")
+                logger.warning("Using zero vector due to missing API key")
+                return [0.0] * 1536
+                
+            # Metni temizle ve hazırla
+            # Çok uzun ise kısalt (OpenAI limitlerine uygun)
+            cleaned_text = text.strip()
+            if len(cleaned_text) > 8000:
+                logger.warning(f"Text too long ({len(cleaned_text)} chars), truncating to 8000 chars")
+                cleaned_text = cleaned_text[:8000]
+            
             while retry_count < self.MAX_RETRIES:
                 try:
-                    logger.debug(f"Creating embedding for text: {text[:50]}...")
+                    logger.debug(f"Creating embedding for text: {cleaned_text[:50]}...")
                     
                     # Run the synchronous API call in a thread pool to avoid blocking
                     response = await asyncio.to_thread(
                         self.client.embeddings.create,
                         model="text-embedding-ada-002",
-                        input=[text])
+                        input=[cleaned_text])
                     
                     # Extract the embedding vector from the response
                     embedding = response.data[0].embedding
+                    
+                    # Vektörün boyutunu kontrol et
+                    if len(embedding) != 1536:
+                        logger.warning(f"Unexpected embedding dimensions: {len(embedding)}, expected 1536")
+                    
+                    logger.debug(f"Successfully created embedding vector with {len(embedding)} dimensions")
                     return embedding
                     
                 except Exception as e:
@@ -85,6 +109,10 @@ class OpenAIService:
                     else:
                         logger.error(f"Failed to create embedding after {self.MAX_RETRIES} attempts")
                         raise
+            
+            # Bu noktaya gelmemesi gerekir, ama yine de bir return değeri ekleyelim
+            logger.error("Unexpected code path in get_embedding")
+            return [0.0] * 1536
             
         except Exception as e:
             logger.error(f"Error in get_embedding: {str(e)}")

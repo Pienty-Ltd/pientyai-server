@@ -232,7 +232,34 @@ class DocumentAnalysisService:
             # Step 4: Analyze the full document against all relevant KB chunks in a single API call
             analysis_start_time = datetime.now()
             
-            # DIKKAT: OpenAI API çağrısı ve sonuç işleme süreci
+            # DIKKAT: Bilgi bankası kontrolleri ve OpenAI API çağrısı
+            logger.info(f"Preparing OpenAI analysis with {len(formatted_kb_chunks)} knowledge base chunks...")
+            
+            # Knowledge base'in boş olması durumunu kontrol et
+            if len(formatted_kb_chunks) == 0:
+                logger.warning("No knowledge base chunks found for analysis - this may impact analysis quality")
+                
+                # Knowledge base bağlantısını test et
+                try:
+                    async with async_session_maker() as session:
+                        # Knowledge base tablosunda veri var mı kontrol et
+                        kb_count_query = select(func.count()).select_from(KnowledgeBase).where(
+                            KnowledgeBase.organization_id == organization_id,
+                            KnowledgeBase.is_knowledge_base == True
+                        )
+                        kb_count_result = await session.execute(kb_count_query)
+                        kb_count = kb_count_result.scalar_one()
+                        
+                        logger.info(f"Organization has {kb_count} total knowledge base entries")
+                        
+                        if kb_count == 0:
+                            logger.warning(f"Organization {organization_id} has no knowledge base entries")
+                        else:
+                            # Neden bulunamadığını araştır
+                            logger.warning(f"Organization has knowledge base entries but none were relevant for this document")
+                except Exception as kb_check_err:
+                    logger.error(f"Error checking knowledge base status: {str(kb_check_err)}")
+            
             logger.info("Sending document for OpenAI analysis...")
             
             try:
@@ -459,10 +486,39 @@ class DocumentAnalysisService:
 
             return relevant_chunks
         except Exception as e:
-            logger.error(
-                f"Error finding relevant knowledge base chunks: {str(e)}",
-                exc_info=True)
-            # Return empty list in case of error to allow the process to continue
+            # Daha ayrıntılı hata günlüğü kaydı
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error finding relevant knowledge base chunks: {str(e)}")
+            logger.error(f"Detailed exception traceback: {error_details}")
+            
+            # pgvector ile ilgili hata olup olmadığını kontrol et
+            error_str = str(e).lower()
+            if "vector" in error_str or "cosine" in error_str or "embedding" in error_str:
+                logger.critical("Possible pgvector extension issue or embedding format problem")
+                # Veritabanında pgvector kontrol edilmeli
+            
+            try:
+                # Fallback yaklaşım - vektör benzerliği olmadan en son eklenen birkaç bilgi bankası öğesini getir
+                logger.info("Attempting fallback query to get recent knowledge base entries")
+                async with async_session_maker() as session:
+                    fallback_query = select(KnowledgeBase).where(
+                        KnowledgeBase.organization_id == organization_id,
+                        KnowledgeBase.is_knowledge_base == True
+                    ).order_by(desc(KnowledgeBase.created_at)).limit(limit)
+                    
+                    result = await session.execute(fallback_query)
+                    fallback_chunks = result.scalars().all()
+                    
+                    if fallback_chunks:
+                        logger.info(f"Retrieved {len(fallback_chunks)} recent knowledge base chunks as fallback")
+                        return fallback_chunks
+                    else:
+                        logger.warning(f"No knowledge base entries found for organization {organization_id}")
+            except Exception as fallback_error:
+                logger.error(f"Fallback query also failed: {str(fallback_error)}")
+            
+            # İşlemi engellemeyip devam etmek için yine de boş liste döndür
             return []
 
     async def create_analysis_record(self, document_id: int,
