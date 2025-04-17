@@ -515,11 +515,11 @@ class DocumentAnalysisService:
                     fp=f"analysis_{uuid.uuid4().hex[:20]}",
                     organization_id=organization_id,
                     document_id=document_id,
-                    document_fp=document.fp,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
                     original_content=None,  # Will be updated later
-                    results=None,  # Will be updated with analysis results
+                    # Store document fingerprint in results temporarily
+                    results={"document_fp": document.fp}
                 )
 
                 session.add(new_analysis)
@@ -551,11 +551,11 @@ class DocumentAnalysisService:
                     fp=f"analysis_{uuid.uuid4().hex[:20]}",
                     organization_id=organization_id,
                     document_id=document.id,
-                    document_fp=document_fp,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
                     original_content=None,  # Will be updated later
-                    results=None,  # Will be updated with analysis results
+                    # Store document fingerprint in results temporarily
+                    results={"document_fp": document_fp}
                 )
 
                 session.add(new_analysis)
