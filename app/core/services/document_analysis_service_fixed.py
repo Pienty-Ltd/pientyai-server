@@ -317,8 +317,8 @@ class DocumentAnalysisService:
                                 is_knowledge_base=chunk.is_knowledge_base,
                                 embedding=chunk.embedding
                                 if hasattr(chunk, 'embedding') else None,
-                                meta_info=chunk.meta_info
-                                if hasattr(chunk, 'meta_info') else None,
+                                metadata=chunk.metadata
+                                if hasattr(chunk, 'metadata') else None,
                                 created_at=chunk.created_at,
                                 updated_at=chunk.updated_at,
                             )
@@ -632,15 +632,15 @@ class DocumentAnalysisService:
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
                     
+                    # Update metadata with additional analysis data
                     # Update fields with analysis data directly
+                    
+                    # Add selected fields to metadata
                     if "total_chunks_analyzed" in analysis_data:
                         analysis.total_chunks_analyzed = analysis_data["total_chunks_analyzed"]
-                    
-                    if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
-                        
-                    if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data["chunk_analyses"]
+                            metadata[field] = analysis_data[field]
+                            
+                    analysis.metadata = metadata
                     
                     await session.commit()
                     logger.info(f"Updated analysis record with ID {analysis_id}")
@@ -675,15 +675,15 @@ class DocumentAnalysisService:
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
                     
+                    # Update metadata with additional analysis data
                     # Update fields with analysis data directly
+                    
+                    # Add selected fields to metadata
                     if "total_chunks_analyzed" in analysis_data:
                         analysis.total_chunks_analyzed = analysis_data["total_chunks_analyzed"]
-                    
-                    if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
-                        
-                    if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data["chunk_analyses"]
+                            metadata[field] = analysis_data[field]
+                            
+                    analysis.metadata = metadata
                     
                     await session.commit()
                     logger.info(
