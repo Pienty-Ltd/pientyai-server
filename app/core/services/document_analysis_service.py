@@ -317,8 +317,8 @@ class DocumentAnalysisService:
                                 is_knowledge_base=chunk.is_knowledge_base,
                                 embedding=chunk.embedding
                                 if hasattr(chunk, 'embedding') else None,
-                                meta_info=chunk.meta_info
-                                if hasattr(chunk, 'meta_info') else None,
+                                metadata=chunk.metadata
+                                if hasattr(chunk, 'metadata') else None,
                                 created_at=chunk.created_at,
                                 updated_at=chunk.updated_at,
                             )
@@ -388,6 +388,7 @@ class DocumentAnalysisService:
                 # Create new analysis record
                 analysis = DocumentAnalysis(
                     document_id=file.id,
+                    document_fp=document_fp,
                     organization_id=organization_id,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
