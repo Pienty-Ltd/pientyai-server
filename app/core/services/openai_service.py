@@ -542,7 +542,7 @@ class OpenAIService:
                     # Run the synchronous API call in a thread pool to avoid blocking
                     response = await asyncio.to_thread(
                         self.client.chat.completions.create,
-                        model="gpt-4.1",  # Using GPT-4.1 model instead of o3-mini
+                        model="gpt-4.1",  # Using GPT-4.1 model
                         messages=[{
                             "role": "system",
                             "content": system_prompt
