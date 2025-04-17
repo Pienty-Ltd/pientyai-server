@@ -252,19 +252,20 @@ class DocumentAnalysisService:
                 # Combine all filter conditions
                 filter_sql = " AND ".join(filter_conditions)
 
-                # Build the SQL query for vector similarity search
+                # Build the SQL query for vector similarity search using working pgvector syntax
                 sql_query = text(f"""
-                WITH similarity_results AS (
-                    SELECT kb.*, 
-                           kb.embedding <=> :query_embedding AS distance,
-                           row_number() OVER (PARTITION BY kb.file_id ORDER BY kb.embedding <=> :query_embedding) as doc_rank
-                    FROM knowledge_base kb
-                    WHERE {filter_sql}
-                    ORDER BY kb.embedding <=> :query_embedding
-                    LIMIT :limit
-                )
-                SELECT * FROM similarity_results
-                ORDER BY distance;
+                SELECT 
+                    kb.*,
+                    1 - (kb.embedding <=> :query_embedding) AS similarity_score
+                FROM 
+                    knowledge_base kb
+                WHERE 
+                    kb.organization_id = :org_id AND
+                    kb.is_knowledge_base = TRUE
+                    {" AND kb.file_id != :doc_id" if current_document_id is not None else ""}
+                ORDER BY 
+                    similarity_score DESC
+                LIMIT :limit
                 """)
 
                 # Prepare parameters
