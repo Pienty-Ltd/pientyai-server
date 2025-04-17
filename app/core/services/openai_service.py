@@ -515,42 +515,34 @@ class OpenAIService:
 
             logger.info("Starting document analysis with OpenAI API using GPT-4.1")
 
-            # Construct a prompt for git-like diff analysis of legal documents
-            system_prompt = """You are an expert legal document analysis AI specializing in analyzing documents and providing git-like diff changes. Your task is to analyze the provided document and identify sections that need to be changed based on the knowledge base information.
+            # Construct a prompt for creating a fully corrected document
+            system_prompt = """You are an expert legal document analysis AI specializing in analyzing and correcting legal documents. Your task is to analyze the provided document and create a fully corrected version based on the knowledge base information.
 
             YOUR CORE RESPONSIBILITY:
-            Generate a git-like diff output showing exactly what should be changed in the provided document. The diff should be in the same format as the original document but show:
-            1. Deletions: Text that should be removed from the document (in red, marked with '-')
-            2. Additions: Text that should be added to the document (in green, marked with '+')
+            Create a completely corrected version of the provided document. Return the entire document with all necessary corrections already applied.
 
             ANALYSIS METHODOLOGY:
             - Compare each section of the document against relevant knowledge base entries
-            - For each issue, identify the exact text that needs to be changed
+            - Correct any sections that don't comply with policies or standards in the knowledge base
             - Use the exact same formatting, language, and style as the original document
-            - Make sure the diff can be directly applied to the original document
             - Preserve section numbers, formatting, and document structure
+            - DO NOT use diff format or show changes with markers - just return the fully corrected document
 
             REQUIRED RESPONSE FORMAT (JSON):
             {
-              "diff_changes": "The complete diff output in the format of the original document with deletions and additions marked"
+              "diff_changes": "The complete corrected document with all changes already applied (not a diff)"
             }
-
-            DIFF MARKING FORMAT:
-            When generating the diff:
-            - Lines that should be removed should start with '-' 
-            - Lines that should be added should start with '+'
-            - Context lines (unchanged) should be included without any prefix
-            - Make sure the diff is comprehensive and covers the entire document
-            - Ensure the output maintains the original document's structure and formatting
 
             CRITICAL INSTRUCTIONS:
             - MATCH DOCUMENT LANGUAGE - Detect the language of the input document and respond in EXACTLY the same language
             - For Turkish documents, respond in Turkish. For English documents, respond in English, etc.
             - FORMAT CONSISTENTLY - Keep all section references in the same format as the original document
-            - Include enough context around each change to clearly identify where in the document the change should be made
-            - Make sure the output is valid and can be directly applied to the original document
+            - DO NOT mark changes with + or - symbols - just provide the final document as it should be
+            - DO NOT include explanations of changes - just provide the corrected document
+            - Make corrections based on policies and information found in the knowledge base
+            - Return the ENTIRE document, not just sections that were changed
             
-            REMEMBER: The output will be used to show git-like changes to the document.
+            REMEMBER: You are creating a corrected, final version of the document, not showing how it should be changed.
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
@@ -572,20 +564,18 @@ class OpenAIService:
             DETAILED INSTRUCTIONS:
             1. Review all {len(knowledge_base_chunks)} knowledge base chunks in the data
             2. Compare the document with the knowledge base entries to identify necessary changes
-            3. Create a git-like diff that shows:
-               - Text that should be removed (marked with '-')
-               - Text that should be added (marked with '+')
-            4. The diff should maintain the original document's format and structure
-            5. Make sure the diff can be directly applied to the original document
+            3. Create a fully corrected version of the document based on the knowledge base content
+            4. Maintain the original document's format and structure
+            5. Return the ENTIRE document with corrections already applied
             
             OUTPUT REQUIREMENTS:
-            - Generate ONLY a comprehensive diff with additions and deletions clearly marked
-            - Do NOT include explanations, justifications, or commentary outside the diff itself
-            - Follow git-diff format: unchanged lines have no prefix, deleted lines start with '-', added lines start with '+'
+            - Return the COMPLETE document with all corrections already applied
+            - Do NOT show annotations, marks, or indicate what has changed
+            - Do NOT include explanations, justifications, or commentary
             - Make all changes in the EXACT same format and language as the original document
-            - Ensure the diff covers ALL necessary changes based on the knowledge base information
+            - Ensure ALL necessary corrections are applied based on the knowledge base information
             
-            Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology and formatting.
+            Remember: Respond in EXACTLY the same language as the document being analyzed, with the same terminology and formatting. Just return the fully corrected document.
             """
 
             retry_count = 0
