@@ -172,7 +172,9 @@ class DocumentAnalysisService:
             logger.error(
                 f"Error analyzing document {document_id}: {str(e)}")
             # If we created an analysis record, update its status to failed
-            if 'analysis_record' in locals() and analysis_record:
+            # Initialize analysis_record to None to prevent 'possibly unbound' error
+            analysis_record = None if 'analysis_record' not in locals() else analysis_record
+            if analysis_record:
                 await self.update_analysis_status(
                     analysis_record.id, AnalysisStatus.FAILED, str(e))
             raise
@@ -254,27 +256,27 @@ class DocumentAnalysisService:
                 # filter_sql = " AND ".join(filter_conditions)
 
                 # Build the SQL query for vector similarity search
-                # Use direct string formatting for the vector query - this is exactly what works in your example
-                embedding_str = str(query_embedding).replace('[', '{').replace(']', '}')
+                # Use parameter binding for the vector embedding instead of string interpolation
+                # This is the correct way to handle vector comparisons in pgvector
                 
-                # Build a SQL query very similar to your working example
-                sql_query = text(f"""
+                # Build a SQL query using parameter binding for the vector
+                sql_query = text("""
                 SELECT 
                     kb.*,
-                    1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score
+                    (embedding <=> :query_embedding) AS similarity_score
                 FROM 
                     knowledge_base kb
                 WHERE 
                     kb.organization_id = :org_id AND
                     kb.is_knowledge_base = TRUE
-                    {" AND kb.file_id != :doc_id" if current_document_id is not None else ""}
+                """ + (" AND kb.file_id != :doc_id" if current_document_id is not None else "") + """
                 ORDER BY 
-                    similarity_score DESC
+                    similarity_score ASC
                 LIMIT :limit
                 """)
                 
                 params = {
-                    "query_embedding": embedding_str,
+                    "query_embedding": query_embedding,
                     "org_id": organization_id,
                     "limit": limit
                 }
