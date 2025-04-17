@@ -345,6 +345,58 @@ class OpenAIService:
             # Fallback to standard batch processing
             return await self.create_batch_embeddings(text_chunks)
     
+    async def analyze_document_chunk_with_git_diff(self, 
+                                            document_chunk: str,
+                                            knowledge_base_chunks: List[Any]) -> Dict[str, Any]:
+        """
+        Analyze a single document chunk against knowledge base chunks to produce git-like diff changes
+        
+        Args:
+            document_chunk: The text content of the chunk to analyze
+            knowledge_base_chunks: List of relevant knowledge base chunks to use as context
+            
+        Returns:
+            Dictionary containing the diff_changes for this chunk
+        """
+        try:
+            if not config.OPENAI_API_KEY:
+                logger.error("OpenAI API key is not configured")
+                return {
+                    "diff_changes": "Error: OpenAI API key is not configured"
+                }
+                
+            logger.info("Analyzing document chunk with GPT-4.1")
+            
+            # Format KB chunks for the prompt, extract only content and metadata
+            formatted_kb_chunks = []
+            for chunk in knowledge_base_chunks:
+                # Convert KB object to dict if needed
+                if not isinstance(chunk, dict):
+                    chunk_dict = {
+                        "content": chunk.content,
+                        "chunk_index": chunk.chunk_index,
+                        "file_id": chunk.file_id
+                    }
+                else:
+                    chunk_dict = chunk
+                formatted_kb_chunks.append(chunk_dict)
+            
+            # Call the main analyze_document method with the chunk
+            analysis_result = await self.analyze_document(
+                document_chunk=document_chunk,
+                knowledge_base_chunks=formatted_kb_chunks
+            )
+            
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"Error in analyze_document_chunk_with_git_diff: {str(e)}")
+            return {
+                "diff_changes": f"Error analyzing chunk: {str(e)}",
+                "processing_time_seconds": 0,
+                "total_chunks_analyzed": 0
+            }
+    
     async def analyze_document(self,
                                document_chunk: str,
                                knowledge_base_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:

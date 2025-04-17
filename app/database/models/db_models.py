@@ -212,7 +212,6 @@ class DocumentAnalysis(Base):
     
     # Gerekli önceki versiyon ve sonraki versiyon karşılaştırmaları için
     original_content = Column(Text, nullable=True)  # Orijinal içerik
-    suggested_changes = Column(JSON, nullable=True)  # Önerilen değişiklikler
     
     # Zaman bilgileri
     created_at = Column(DateTime(timezone=True), server_default=func.now())

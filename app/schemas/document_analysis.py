@@ -56,6 +56,5 @@ class PaginatedAnalysisResponse(BaseModel):
     
 class AnalysisDetailResponse(DocumentAnalysisResponse):
     original_content: Optional[str] = Field(None, description="The original document content")
-    suggested_changes: Optional[Dict[str, Any]] = Field(None, description="Suggested changes to the document")
     document_filename: Optional[str] = None
     document_type: Optional[str] = None

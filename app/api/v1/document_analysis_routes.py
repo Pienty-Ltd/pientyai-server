@@ -361,7 +361,6 @@ async def get_analysis_detail(
                 created_at=analysis.created_at,
                 completed_at=analysis.completed_at,
                 original_content=analysis.original_content,
-                suggested_changes=analysis.suggested_changes,
                 document_filename=document.filename if document else None,
                 document_type=document.file_type if document else None
             ),
