@@ -224,8 +224,17 @@ class DocumentAnalysisService:
             # Sort by similarity score (highest first)
             kb_chunks_with_metadata.sort(key=lambda x: x[1], reverse=True)
             
+            # Token limiti nedeniyle chunk sayısını sınırla
+            # En alakalı 10-15 chunk al, token limitini aşmamak için
+            max_chunks_to_include = min(15, len(kb_chunks_with_metadata))
+            
+            logger.info(f"Limiting KB chunks from {len(kb_chunks_with_metadata)} to {max_chunks_to_include} most relevant")
+            
+            # Sadece en alakalı chunk'ları kullan
+            top_chunks = kb_chunks_with_metadata[:max_chunks_to_include]
+            
             # Extract just the info objects
-            formatted_kb_chunks = [chunk_data[0] for chunk_data in kb_chunks_with_metadata]
+            formatted_kb_chunks = [chunk_data[0] for chunk_data in top_chunks]
             
             logger.info(f"Prepared {len(formatted_kb_chunks)} KB chunks for OpenAI analysis")
             

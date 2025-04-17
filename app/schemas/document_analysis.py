@@ -31,8 +31,8 @@ class DocumentAnalysisResponse(BaseModel):
     diff_changes: Optional[str] = Field("", description="Git-like diff changes showing additions (green) and deletions (red)")
     total_chunks_analyzed: int = Field(..., description="Total number of chunks analyzed")
     processing_time_seconds: float = Field(..., description="Total processing time in seconds")
-    # Değişiklik: Union kullanarak hem dict hem list türlerini kabul edeceğiz
-    chunk_analyses: Union[List[Dict[str, Any]], Dict[str, Any], List[Any], Any] = Field(default_factory=list, description="Individual analyses for each chunk")
+    # Daha esnek yapı için Optional[Any] kullanıyoruz
+    chunk_analyses: Optional[Any] = Field(None, description="Individual analyses for each chunk")
     status: Optional[str] = Field(None, description="Status of the analysis")
     created_at: Optional[datetime] = Field(None, description="When the analysis was created")
     completed_at: Optional[datetime] = Field(None, description="When the analysis was completed")
