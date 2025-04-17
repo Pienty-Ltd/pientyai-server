@@ -5,7 +5,7 @@ import logging
 import asyncio
 import math
 from datetime import datetime
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc, and_, or_, text
 
 from app.core.services.openai_service import OpenAIService
 from app.core.services.document_service import DocumentService
@@ -253,7 +253,7 @@ class DocumentAnalysisService:
                 filter_sql = " AND ".join(filter_conditions)
 
                 # Build the SQL query for vector similarity search
-                sql_query = f"""
+                sql_query = text(f"""
                 WITH similarity_results AS (
                     SELECT kb.*, 
                            kb.embedding <=> :query_embedding AS distance,
@@ -265,7 +265,7 @@ class DocumentAnalysisService:
                 )
                 SELECT * FROM similarity_results
                 ORDER BY distance;
-                """
+                """)
 
                 # Prepare parameters
                 params = {
@@ -307,10 +307,10 @@ class DocumentAnalysisService:
 
                     # Fetch all the chunks in a single query
                     # This is more efficient than making multiple queries
-                    adjacent_query = f"""
+                    adjacent_query = text(f"""
                     SELECT * FROM knowledge_base 
                     WHERE file_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
-                    """
+                    """)
                     result = await session.execute(
                         adjacent_query, {"doc_ids": list(document_ids)})
                     all_chunks = result.fetchall()
