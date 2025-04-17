@@ -1,0 +1,30 @@
+14,err_Mi0wHsk9G3L6BmfYlMVzIy0Hl,HTTP_500,500: An error occurred while retrieving analysis details,"Traceback (most recent call last):
+  File ""/home/pientyai-api/app/api/v1/document_analysis_routes.py"", line 403, in get_analysis_detail
+    data=AnalysisDetailResponse(
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/usr/local/lib/python3.11/dist-packages/pydantic/main.py"", line 214, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 1 validation error for AnalysisDetailResponse
+chunk_analyses
+  Input should be a valid list [type=list_type, input_value={'diff_changes': 'KSB Pom...01_2025_Enver (2).pdf'}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/list_type
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File ""/usr/local/lib/python3.11/dist-packages/starlette/_exception_handler.py"", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File ""/usr/local/lib/python3.11/dist-packages/starlette/routing.py"", line 73, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File ""/usr/local/lib/python3.11/dist-packages/fastapi/routing.py"", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/usr/local/lib/python3.11/dist-packages/fastapi/routing.py"", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/home/pientyai-api/app/api/v1/document_analysis_routes.py"", line 426, in get_analysis_detail
+    raise HTTPException(
+fastapi.exceptions.HTTPException: 500: An error occurred while retrieving analysis details
+",document_analysis_routes.py,get_analysis_detail,426,01c5b8c3-3c5a-411e-a1a2-18ae28d1c2de,,127.0.0.1,http://api.pienty.ai/api/v1/document-analysis/analysis_f8e3265f8bd74ce0b8e8,GET,r-server55024-qjk,development,{},0,,,2025-04-17 17:16:31.408216 +00:00,

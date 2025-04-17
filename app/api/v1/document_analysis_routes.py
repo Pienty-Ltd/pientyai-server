@@ -407,7 +407,10 @@ async def get_analysis_detail(
                 diff_changes=analysis.diff_changes or "",  # Git-like diff changes field
                 total_chunks_analyzed=analysis.total_chunks_analyzed or 0,
                 processing_time_seconds=float(analysis.processing_time_seconds) if analysis.processing_time_seconds else 0.0,
-                chunk_analyses=analysis.chunk_analyses or [],
+                # Chunk analyses'i doğru formatta döndürelim
+                chunk_analyses=analysis.chunk_analyses if isinstance(analysis.chunk_analyses, list) else (
+                    [analysis.chunk_analyses] if isinstance(analysis.chunk_analyses, dict) else []
+                ),
                 status=analysis.status.value,
                 created_at=analysis.created_at,
                 completed_at=analysis.completed_at,
@@ -423,6 +426,59 @@ async def get_analysis_detail(
         raise e
     except Exception as e:
         logger.error(f"Error retrieving analysis details: {str(e)}", exc_info=True)
+        
+        # Hata durumunda daha dayanıklı bir yanıt oluşturalım
+        try:
+            # Eğer analiz verisi alındıysa, güvenli bir alternatif yanıt oluşturalım
+            if 'analysis' in locals() and analysis is not None:
+                # chunk_analyses alanını düzgün formatta hazırlayalım
+                safe_chunk_analyses = []
+                
+                if hasattr(analysis, 'chunk_analyses') and analysis.chunk_analyses:
+                    # Eğer dict tipindeyse, bir liste içine sarmalayalım
+                    if isinstance(analysis.chunk_analyses, dict):
+                        safe_chunk_analyses = [analysis.chunk_analyses]
+                    # Eğer zaten liste tipindeyse, olduğu gibi kullanalım
+                    elif isinstance(analysis.chunk_analyses, list):
+                        safe_chunk_analyses = analysis.chunk_analyses
+                
+                # document_fp ve organization_fp'yi güvenli şekilde alalım
+                safe_document_fp = ""
+                if 'document' in locals() and document:
+                    safe_document_fp = document.fp
+                
+                safe_org_fp = ""
+                if 'organization_fp' in locals():
+                    safe_org_fp = organization_fp
+                
+                # Doğrudan dict kullanarak pydantic validasyonunu atlatalım
+                response_data = {
+                    "fp": analysis.fp,
+                    "document_fp": safe_document_fp,
+                    "organization_fp": safe_org_fp,
+                    "diff_changes": analysis.diff_changes or "",
+                    "total_chunks_analyzed": analysis.total_chunks_analyzed or 0,
+                    "processing_time_seconds": float(analysis.processing_time_seconds) if analysis.processing_time_seconds else 0.0,
+                    "chunk_analyses": safe_chunk_analyses,  # Düzeltilmiş güvenli chunk_analyses
+                    "status": analysis.status.value if hasattr(analysis, 'status') else "unknown",
+                    "created_at": analysis.created_at,
+                    "completed_at": analysis.completed_at,
+                    "original_content": analysis.original_content,
+                    "document_filename": document.filename if 'document' in locals() and document else None,
+                    "document_type": document.file_type if 'document' in locals() and document else None
+                }
+                
+                return BaseResponse.from_request(
+                    request=request,
+                    data=response_data,  # Pydantic model yerine doğrudan dict kullanıyoruz
+                    success=True,
+                    message=f"Retrieved details for analysis {analysis_fp} (recovered from error)"
+                )
+                
+        except Exception as recovery_error:
+            logger.error(f"Error during analysis details recovery: {str(recovery_error)}", exc_info=True)
+        
+        # Eğer kurtarma başarısız olursa, standart hata yanıtını döndür
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while retrieving analysis details"
