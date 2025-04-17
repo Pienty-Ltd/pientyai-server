@@ -29,7 +29,8 @@ class DocumentAnalysisService:
             organization_id: int,
             document_id: int,
             user_id: int,
-            max_relevant_chunks: int = 5) -> Dict[str, Any]:
+            max_relevant_chunks: int = 5,
+            analysis_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Analyze a document against the organization's knowledge base
         
@@ -38,6 +39,7 @@ class DocumentAnalysisService:
             document_id: ID of the document to analyze
             user_id: ID of the user requesting the analysis
             max_relevant_chunks: Maximum number of relevant chunks to retrieve from knowledge base
+            analysis_id: Optional ID of an existing analysis record to use instead of creating a new one
             
         Returns:
             Dictionary containing the analysis results
@@ -47,9 +49,21 @@ class DocumentAnalysisService:
                 f"Starting document analysis for doc {document_id} in organization {organization_id}"
             )
 
-            # Create a record to track the analysis
-            analysis_record = await self.create_analysis_record(
-                document_id, organization_id, user_id)
+            # Get existing analysis record or create a new one if not provided
+            if analysis_id:
+                async with async_session_maker() as session:
+                    stmt = select(DocumentAnalysis).where(DocumentAnalysis.id == analysis_id)
+                    result = await session.execute(stmt)
+                    analysis_record = result.scalar_one_or_none()
+                    
+                    if not analysis_record:
+                        logger.warning(f"Analysis record with ID {analysis_id} not found, creating new one")
+                        analysis_record = await self.create_analysis_record(
+                            document_id, organization_id, user_id)
+            else:
+                # Create a record to track the analysis
+                analysis_record = await self.create_analysis_record(
+                    document_id, organization_id, user_id)
 
             if not analysis_record:
                 raise Exception(

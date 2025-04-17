@@ -101,7 +101,8 @@ async def analyze_document(
                     organization_id=organization.id,
                     document_id=analysis_record.document_id,  # Using ID from created record
                     user_id=current_user.id,
-                    max_relevant_chunks=analysis_request.max_relevant_chunks
+                    max_relevant_chunks=analysis_request.max_relevant_chunks,
+                    analysis_id=analysis_record.id  # Pass the existing analysis record ID
                 )
                 logger.info(f"Background analysis task completed for document {analysis_request.document_fp}")
             except Exception as e:

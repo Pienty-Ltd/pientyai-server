@@ -22,7 +22,51 @@ class OpenAIService:
 
     def __init__(self):
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-
+        
+    async def get_embedding(self, text: str) -> List[float]:
+        """
+        Create embedding for a single text string
+        
+        Args:
+            text: The text to create an embedding for
+            
+        Returns:
+            The embedding vector as a list of floats
+        """
+        try:
+            retry_count = 0
+            
+            while retry_count < self.MAX_RETRIES:
+                try:
+                    logger.debug(f"Creating embedding for text: {text[:50]}...")
+                    
+                    # Run the synchronous API call in a thread pool to avoid blocking
+                    response = await asyncio.to_thread(
+                        self.client.embeddings.create,
+                        model="text-embedding-ada-002",
+                        input=[text])
+                    
+                    # Extract the embedding vector from the response
+                    embedding = response.data[0].embedding
+                    return embedding
+                    
+                except Exception as e:
+                    retry_count += 1
+                    logger.warning(
+                        f"Error creating embedding (attempt {retry_count}/{self.MAX_RETRIES}): {str(e)}"
+                    )
+                    
+                    if retry_count < self.MAX_RETRIES:
+                        await asyncio.sleep(self.RETRY_DELAY * (2 ** (retry_count - 1)))
+                    else:
+                        logger.error(f"Failed to create embedding after {self.MAX_RETRIES} attempts")
+                        raise
+            
+        except Exception as e:
+            logger.error(f"Error in get_embedding: {str(e)}")
+            # Return a zero vector as a last resort
+            return [0.0] * 1536  # Ada-002 has 1536 dimensions
+            
     async def create_embeddings(self,
                                 text_chunks: List[str]) -> List[List[float]]:
         """
