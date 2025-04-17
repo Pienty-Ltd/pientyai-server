@@ -261,9 +261,8 @@ class DocumentAnalysisService:
                 # filter_sql = " AND ".join(filter_conditions)
 
                 # PostgreSQL pgvector sorgu formatını düzenle
-                # Vektör verisi doğrudan formatlı string içerisine yerleştirilmeli
-                embedding_str = str(query_embedding).replace('[', '{').replace(
-                    ']', '}')
+                # Vektör formatını koruyalım, köşeli parantezler gerekli
+                embedding_str = str(query_embedding)
                 
                 # Vektör embeddingi için doğrudan SQL sorgusu formatla (pgvector özel syntax gerekiyor)
                 # PostgreSQL pgvector eklentisi bind parametreleriyle bazen sorun yaşayabiliyor
@@ -296,12 +295,17 @@ class DocumentAnalysisService:
 
                 # Execute the query with error handling
                 try:
+                    # Log the vector format for better debugging
+                    vector_log = embedding_str[:100] + "..." if len(embedding_str) > 100 else embedding_str
+                    logger.debug(f"Vector format being used: {vector_log}")
                     logger.debug(f"Executing vector search query with params: {params}")
+                    
                     result = await session.execute(sql_query, params)
                     relevant_chunks = result.fetchall()
                     logger.info(f"Vector search found {len(relevant_chunks)} relevant chunks") 
                 except Exception as query_exc:
                     logger.error(f"Vector search query failed: {str(query_exc)}")
+                    logger.error(f"SQL Query attempted: {sql_query}")
                     # Return an empty list instead of raising to not block the entire flow
                     return []
 
