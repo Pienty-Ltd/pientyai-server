@@ -172,7 +172,8 @@ class DocumentAnalysisService:
         except Exception as e:
             logger.error(f"Error analyzing document {document_id}: {str(e)}")
             # If we created an analysis record, update its status to failed
-            if 'analysis_record' in locals() and analysis_record:
+            analysis_record_exists = 'analysis_record' in locals()
+            if analysis_record_exists and analysis_record:
                 await self.update_analysis_status(analysis_record.id,
                                                   AnalysisStatus.FAILED,
                                                   str(e))
@@ -254,22 +255,22 @@ class DocumentAnalysisService:
                 # We're now using a direct SQL approach with vector embedding
                 # filter_sql = " AND ".join(filter_conditions)
 
-                # Build the SQL query for vector similarity search
-                # Use direct string formatting for the vector query - this is exactly what works in your example
+                # Build the SQL query for vector similarity search - using bind parameters to be safer
+                # Need to use raw query with vector syntax
                 embedding_str = str(query_embedding).replace('[', '{').replace(
                     ']', '}')
 
-                # Build a SQL query very similar to your working example
-                sql_query = text(f"""
+                # Build a safer SQL query using bind parameters where possible
+                sql_query = text("""
                 SELECT 
                     kb.*,
-                    1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score
+                    1 - (embedding <=> :query_embedding::vector) AS similarity_score
                 FROM 
                     knowledge_base kb
                 WHERE 
                     kb.organization_id = :org_id AND
                     kb.is_knowledge_base = TRUE
-                    {" AND kb.file_id != :doc_id" if current_document_id is not None else ""}
+                """ + (" AND kb.file_id != :doc_id" if current_document_id is not None else "") + """
                 ORDER BY 
                     similarity_score DESC
                 LIMIT :limit
@@ -315,7 +316,7 @@ class DocumentAnalysisService:
 
                     # Fetch all the chunks in a single query
                     # This is more efficient than making multiple queries
-                    adjacent_query = text(f"""
+                    adjacent_query = text("""
                     SELECT * FROM knowledge_base 
                     WHERE file_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
                     """)
