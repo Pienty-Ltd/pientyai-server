@@ -309,10 +309,9 @@ async def get_analysis_detail(
     Get detailed information about a document analysis.
     
     This endpoint retrieves detailed information about a specific document analysis, including:
-    - Analysis summary
-    - Key points, conflicts, and recommendations
+    - Document details
     - Original document content
-    - Suggested changes with highlighted differences
+    - Diff changes with git-like format showing removals (red) and additions (green)
     """
     try:
         # Initialize service

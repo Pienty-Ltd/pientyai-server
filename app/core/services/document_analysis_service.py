@@ -407,10 +407,8 @@ class DocumentAnalysisService:
             combined_analysis["total_chunks_analyzed"] = total_chunks
             combined_analysis["processing_time_seconds"] = total_duration
 
-            # Generate detailed suggested changes based on the analysis
-            # Extract more information from the combined analysis to enhance the suggested changes
-            conflicts = combined_analysis.get("conflicts", [])
-            recommendations = combined_analysis.get("recommendations", [])
+            # Artık conflict ve recommendation alanları yerine sadece diff_changes formatı kullanıyoruz
+            # Aşağıdaki satırları kaldırıyoruz ve doğrudan diff_changes'e odaklanıyoruz
 
             # Add specific details to the analysis_results to generate better suggested changes
             enhanced_results = []
@@ -421,14 +419,8 @@ class DocumentAnalysisService:
                 # Add the original document content for context
                 enhanced_result["original_content"] = original_content
 
-                # Add overall conflicts and recommendations for better context
-                if "conflicts" not in enhanced_result or not enhanced_result[
-                        "conflicts"]:
-                    enhanced_result["conflicts"] = conflicts
-
-                if "recommendations" not in enhanced_result or not enhanced_result[
-                        "recommendations"]:
-                    enhanced_result["recommendations"] = recommendations
+                # Artık conflicts ve recommendations alanları kullanılmıyor, 
+                # sadece diff_changes formatına odaklanıyoruz
 
                 enhanced_results.append(enhanced_result)
 
@@ -475,26 +467,13 @@ class DocumentAnalysisService:
                     exc_info=True)
 
             return {
-                "id":
-                updated_record.id,
-                "fp":
-                updated_record.fp,
-                "document_fp":
-                document.fp if document else "",
-                "organization_fp":
-                organization.fp if organization else "",
-                "analysis":
-                updated_record.analysis,
-                "key_points":
-                updated_record.key_points,
-                "conflicts":
-                updated_record.conflicts,
-                "recommendations":
-                updated_record.recommendations,
-                "total_chunks_analyzed":
-                updated_record.total_chunks_analyzed,
-                "processing_time_seconds":
-                float(updated_record.processing_time_seconds)
+                "id": updated_record.id,
+                "fp": updated_record.fp,
+                "document_fp": document.fp if document else "",
+                "organization_fp": organization.fp if organization else "",
+                "diff_changes": updated_record.diff_changes,
+                "total_chunks_analyzed": updated_record.total_chunks_analyzed,
+                "processing_time_seconds": float(updated_record.processing_time_seconds)
                 if updated_record.processing_time_seconds else 0.0,
                 "chunk_analyses":
                 updated_record.chunk_analyses,

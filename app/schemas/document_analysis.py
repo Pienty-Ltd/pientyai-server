@@ -21,7 +21,7 @@ class DocumentAnalysisRequest(BaseModel):
 
 class ChunkAnalysis(BaseModel):
     chunk_index: int
-    analysis: str
+    diff_changes: str
     processing_time_seconds: Optional[float] = None
     
 class DocumentAnalysisResponse(BaseModel):
