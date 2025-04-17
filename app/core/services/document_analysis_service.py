@@ -318,54 +318,16 @@ class DocumentAnalysisService:
             
             # Perform a single analysis with all document content and knowledge base chunks
             logger.info(f"Performing consolidated analysis with all document content and KB chunks")
-            try:
-                # Ensure we have valid knowledge base chunks to prevent errors
-                if not consolidated_kb_chunks:
-                    logger.warning("No knowledge base chunks found. Proceeding with empty knowledge base.")
-                    consolidated_kb_chunks = []
-                
-                # Check if document content is not empty
-                if not full_document_content:
-                    error_msg = "Document content is empty, cannot proceed with analysis"
-                    await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
-                    raise ValueError(error_msg)
-                
-                # Log document and knowledge base sizes for debugging
-                logger.info(f"Document content length: {len(full_document_content)} characters")
-                logger.info(f"Knowledge base chunks: {len(consolidated_kb_chunks)} items")
-                
-                # Call OpenAI service with enhanced error handling
-                consolidated_analysis = await self.openai_service.analyze_document(
-                    document_chunk=full_document_content,
-                    knowledge_base_chunks=consolidated_kb_chunks)
-                
-                if not consolidated_analysis:
-                    error_msg = "OpenAI API returned empty response for document analysis"
-                    logger.error(error_msg)
-                    await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
-                    raise ValueError(error_msg)
-                
-                # Check for error messages in the response
-                if "error" in consolidated_analysis:
-                    error_msg = f"Analysis failed: {consolidated_analysis.get('error', 'Unknown error')}"
-                    logger.error(error_msg)
-                    await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
-                    raise ValueError(error_msg)
-                
-                logger.info("Successfully received analysis from OpenAI API")
-                
-                # Add metadata to the analysis
-                consolidated_analysis["is_consolidated_analysis"] = True
-                consolidated_analysis["processing_time_seconds"] = (
-                    datetime.now() - chunk_start_time).total_seconds()
-                consolidated_analysis["total_kb_chunks"] = len(consolidated_kb_chunks)
-                consolidated_analysis["total_document_chunks"] = total_chunks
-            
-            except Exception as e:
-                error_msg = f"Error during document analysis with OpenAI: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                await self.update_analysis_status(analysis_record.id, AnalysisStatus.FAILED, error_msg)
-                raise ValueError(error_msg)
+            consolidated_analysis = await self.openai_service.analyze_document(
+                document_chunk=full_document_content,
+                knowledge_base_chunks=consolidated_kb_chunks)
+
+            # Add metadata to the analysis
+            consolidated_analysis["is_consolidated_analysis"] = True
+            consolidated_analysis["processing_time_seconds"] = (
+                datetime.now() - chunk_start_time).total_seconds()
+            consolidated_analysis["total_kb_chunks"] = len(consolidated_kb_chunks)
+            consolidated_analysis["total_document_chunks"] = total_chunks
 
             # Calculate total processing time
             total_processing_time = (datetime.now() - start_time).total_seconds()
