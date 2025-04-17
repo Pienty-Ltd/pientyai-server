@@ -52,12 +52,15 @@ class DocumentAnalysisService:
             # Get existing analysis record or create a new one if not provided
             if analysis_id:
                 async with async_session_maker() as session:
-                    stmt = select(DocumentAnalysis).where(DocumentAnalysis.id == analysis_id)
+                    stmt = select(DocumentAnalysis).where(
+                        DocumentAnalysis.id == analysis_id)
                     result = await session.execute(stmt)
                     analysis_record = result.scalar_one_or_none()
-                    
+
                     if not analysis_record:
-                        logger.warning(f"Analysis record with ID {analysis_id} not found, creating new one")
+                        logger.warning(
+                            f"Analysis record with ID {analysis_id} not found, creating new one"
+                        )
                         analysis_record = await self.create_analysis_record(
                             document_id, organization_id, user_id)
             else:
@@ -72,7 +75,7 @@ class DocumentAnalysisService:
 
             # Update status to processing
             await self.update_analysis_status(analysis_record.id,
-                                             AnalysisStatus.PROCESSING)
+                                              AnalysisStatus.PROCESSING)
 
             # Get document chunks
             document_chunks = await self.get_document_chunks(document_id)
@@ -84,12 +87,13 @@ class DocumentAnalysisService:
                 return {"error": "Document has no content to analyze."}
 
             # Get the original document text to store in the analysis record
-            original_content = "\n\n".join(
-                chunk.content for chunk in document_chunks if chunk.content)
+            original_content = "\n\n".join(chunk.content
+                                           for chunk in document_chunks
+                                           if chunk.content)
 
             # Update original content in the analysis record
             await self.update_original_content(analysis_record.id,
-                                              original_content)
+                                               original_content)
 
             # Process each chunk against knowledge base
             chunk_analyses = []
@@ -122,8 +126,7 @@ class DocumentAnalysisService:
                 chunk_result = await self.openai_service.analyze_document_chunk_with_git_diff(
                     chunk.content, relevant_chunks)
                 end_time = datetime.now()
-                processing_time = (end_time -
-                                  start_time).total_seconds()
+                processing_time = (end_time - start_time).total_seconds()
                 total_processing_time += processing_time
 
                 # Add chunk index and processing time to the chunk results
@@ -156,11 +159,9 @@ class DocumentAnalysisService:
             }
 
             # Update the analysis record with the results
-            await self.update_analysis_record(
-                analysis_record.id, 
-                analysis_result,
-                AnalysisStatus.COMPLETED
-            )
+            await self.update_analysis_record(analysis_record.id,
+                                              analysis_result,
+                                              AnalysisStatus.COMPLETED)
 
             logger.info(
                 f"Completed document analysis for doc {document_id} in organization {organization_id}"
@@ -169,12 +170,12 @@ class DocumentAnalysisService:
             return analysis_result
 
         except Exception as e:
-            logger.error(
-                f"Error analyzing document {document_id}: {str(e)}")
+            logger.error(f"Error analyzing document {document_id}: {str(e)}")
             # If we created an analysis record, update its status to failed
             if 'analysis_record' in locals() and analysis_record:
-                await self.update_analysis_status(
-                    analysis_record.id, AnalysisStatus.FAILED, str(e))
+                await self.update_analysis_status(analysis_record.id,
+                                                  AnalysisStatus.FAILED,
+                                                  str(e))
             raise
 
     async def get_document_chunks(self,
@@ -255,8 +256,9 @@ class DocumentAnalysisService:
 
                 # Build the SQL query for vector similarity search
                 # Use direct string formatting for the vector query - this is exactly what works in your example
-                embedding_str = str(query_embedding).replace('[', '{').replace(']', '}')
-                
+                embedding_str = str(query_embedding).replace('[', '{').replace(
+                    ']', '}')
+
                 # Build a SQL query very similar to your working example
                 sql_query = text(f"""
                 SELECT 
@@ -272,7 +274,7 @@ class DocumentAnalysisService:
                     similarity_score DESC
                 LIMIT :limit
                 """)
-                
+
                 params = {
                     "query_embedding": embedding_str,
                     "org_id": organization_id,
@@ -334,10 +336,10 @@ class DocumentAnalysisService:
                                 chunk_index=chunk.chunk_index,
                                 content=chunk.content,
                                 is_knowledge_base=chunk.is_knowledge_base,
-                                embedding=chunk.embedding
-                                if hasattr(chunk, 'embedding') else None,
-                                meta_info=chunk.meta_info
-                                if hasattr(chunk, 'meta_info') else None,
+                                embedding=chunk.embedding if hasattr(
+                                    chunk, 'embedding') else None,
+                                meta_info=chunk.meta_info if hasattr(
+                                    chunk, 'meta_info') else None,
                                 created_at=chunk.created_at,
                                 updated_at=chunk.updated_at,
                             )
@@ -461,26 +463,27 @@ class DocumentAnalysisService:
         async with async_session_maker() as session:
             # Base query filters
             filters = [DocumentAnalysis.organization_id == organization_id]
-            
+
             # Add status filter if provided
             if status_filter:
                 filters.append(DocumentAnalysis.status == status_filter)
-            
+
             # Count total matching analyses
-            count_stmt = select(func.count()).select_from(DocumentAnalysis).where(
-                *filters)
+            count_stmt = select(
+                func.count()).select_from(DocumentAnalysis).where(*filters)
             count_result = await session.execute(count_stmt)
             total_count = count_result.scalar()
-            
+
             # Calculate total pages
             total_pages = math.ceil(total_count / per_page)
-            
+
             # Get the paginated results
             stmt = select(DocumentAnalysis).where(*filters).order_by(
-                desc(DocumentAnalysis.created_at)).offset((page - 1) * per_page).limit(per_page)
+                desc(DocumentAnalysis.created_at)).offset(
+                    (page - 1) * per_page).limit(per_page)
             result = await session.execute(stmt)
             analyses = list(result.scalars().all())
-            
+
             return analyses, total_count, total_pages
 
     async def get_analyses_for_user(
@@ -493,27 +496,30 @@ class DocumentAnalysisService:
         """Get analyses across all organizations a user has access to"""
         async with async_session_maker() as session:
             # Base query filter - analyses from organizations the user has access to
-            filters = [DocumentAnalysis.organization_id.in_(user_organization_ids)]
-            
+            filters = [
+                DocumentAnalysis.organization_id.in_(user_organization_ids)
+            ]
+
             # Add status filter if provided
             if status_filter:
                 filters.append(DocumentAnalysis.status == status_filter)
-            
+
             # Count total matching analyses
-            count_stmt = select(func.count()).select_from(DocumentAnalysis).where(
-                *filters)
+            count_stmt = select(
+                func.count()).select_from(DocumentAnalysis).where(*filters)
             count_result = await session.execute(count_stmt)
             total_count = count_result.scalar()
-            
+
             # Calculate total pages
             total_pages = math.ceil(total_count / per_page)
-            
+
             # Get the paginated results
             stmt = select(DocumentAnalysis).where(*filters).order_by(
-                desc(DocumentAnalysis.created_at)).offset((page - 1) * per_page).limit(per_page)
+                desc(DocumentAnalysis.created_at)).offset(
+                    (page - 1) * per_page).limit(per_page)
             result = await session.execute(stmt)
             analyses = list(result.scalars().all())
-            
+
             return analyses, total_count, total_pages
 
     async def update_analysis_status(
@@ -525,22 +531,25 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-                
+
                 if analysis:
                     analysis.status = status
-                    
+
                     # Set completed_at timestamp if status is completed or failed
-                    if status in [AnalysisStatus.COMPLETED, AnalysisStatus.FAILED]:
+                    if status in [
+                            AnalysisStatus.COMPLETED, AnalysisStatus.FAILED
+                    ]:
                         analysis.completed_at = datetime.now()
-                    
+
                     # Store error message if provided
                     if error_message and status == AnalysisStatus.FAILED:
                         # Store error message directly in error_message column
                         analysis.error_message = error_message
-                        
+
                     await session.commit()
                     logger.info(
-                        f"Updated analysis {analysis_id} status to {status.value}")
+                        f"Updated analysis {analysis_id} status to {status.value}"
+                    )
                 else:
                     logger.warning(
                         f"Analysis record with ID {analysis_id} not found for status update"
@@ -562,22 +571,25 @@ class DocumentAnalysisService:
                     DocumentAnalysis.fp == analysis_fp)
                 result = await session.execute(stmt)
                 analysis = result.scalar_one_or_none()
-                
+
                 if analysis:
                     analysis.status = status
-                    
+
                     # Set completed_at timestamp if status is completed or failed
-                    if status in [AnalysisStatus.COMPLETED, AnalysisStatus.FAILED]:
+                    if status in [
+                            AnalysisStatus.COMPLETED, AnalysisStatus.FAILED
+                    ]:
                         analysis.completed_at = datetime.now()
-                    
+
                     # Store error message if provided
                     if error_message and status == AnalysisStatus.FAILED:
                         # Store error message directly in error_message column
                         analysis.error_message = error_message
-                        
+
                     await session.commit()
                     logger.info(
-                        f"Updated analysis {analysis_fp} status to {status.value}")
+                        f"Updated analysis {analysis_fp} status to {status.value}"
+                    )
                 else:
                     logger.warning(
                         f"Analysis record with fingerprint {analysis_fp} not found for status update"
@@ -593,7 +605,7 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-                
+
                 if analysis:
                     analysis.original_content = content
                     await session.commit()
@@ -617,7 +629,7 @@ class DocumentAnalysisService:
                     DocumentAnalysis.fp == analysis_fp)
                 result = await session.execute(stmt)
                 analysis = result.scalar_one_or_none()
-                
+
                 if analysis:
                     analysis.original_content = content
                     await session.commit()
@@ -641,28 +653,32 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-                
+
                 if analysis:
                     # Update status
                     analysis.status = status
                     analysis.completed_at = datetime.now()
-                    
+
                     # Update diff_changes
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
-                    
+
                     # Update fields with analysis data directly
                     if "total_chunks_analyzed" in analysis_data:
-                        analysis.total_chunks_analyzed = analysis_data["total_chunks_analyzed"]
-                    
+                        analysis.total_chunks_analyzed = analysis_data[
+                            "total_chunks_analyzed"]
+
                     if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
-                        
+                        analysis.processing_time_seconds = analysis_data[
+                            "processing_time_seconds"]
+
                     if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data["chunk_analyses"]
-                    
+                        analysis.chunk_analyses = analysis_data[
+                            "chunk_analyses"]
+
                     await session.commit()
-                    logger.info(f"Updated analysis record with ID {analysis_id}")
+                    logger.info(
+                        f"Updated analysis record with ID {analysis_id}")
                 else:
                     logger.warning(
                         f"Analysis record with ID {analysis_id} not found for update"
@@ -684,26 +700,29 @@ class DocumentAnalysisService:
                     DocumentAnalysis.fp == analysis_fp)
                 result = await session.execute(stmt)
                 analysis = result.scalar_one_or_none()
-                
+
                 if analysis:
                     # Update status
                     analysis.status = status
                     analysis.completed_at = datetime.now()
-                    
+
                     # Update diff_changes
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
-                    
+
                     # Update fields with analysis data directly
                     if "total_chunks_analyzed" in analysis_data:
-                        analysis.total_chunks_analyzed = analysis_data["total_chunks_analyzed"]
-                    
+                        analysis.total_chunks_analyzed = analysis_data[
+                            "total_chunks_analyzed"]
+
                     if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
-                        
+                        analysis.processing_time_seconds = analysis_data[
+                            "processing_time_seconds"]
+
                     if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data["chunk_analyses"]
-                    
+                        analysis.chunk_analyses = analysis_data[
+                            "chunk_analyses"]
+
                     await session.commit()
                     logger.info(
                         f"Updated analysis record with fp {analysis_fp} with git-like diff changes"
