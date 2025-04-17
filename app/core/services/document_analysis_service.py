@@ -249,14 +249,19 @@ class DocumentAnalysisService:
                 if current_document_id is not None:
                     filter_conditions.append("kb.file_id != :doc_id")
 
-                # Combine all filter conditions
-                filter_sql = " AND ".join(filter_conditions)
+                # Combine all filter conditions (used for non-pgvector version)
+                # We're now using a direct SQL approach with vector embedding
+                # filter_sql = " AND ".join(filter_conditions)
 
-                # Build the SQL query for vector similarity search using working pgvector syntax
+                # Build the SQL query for vector similarity search
+                # Use direct string formatting for the vector query - this is exactly what works in your example
+                embedding_str = str(query_embedding).replace('[', '{').replace(']', '}')
+                
+                # Build a SQL query very similar to your working example
                 sql_query = text(f"""
                 SELECT 
                     kb.*,
-                    1 - (kb.embedding <=> :query_embedding) AS similarity_score
+                    1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score
                 FROM 
                     knowledge_base kb
                 WHERE 
@@ -267,10 +272,9 @@ class DocumentAnalysisService:
                     similarity_score DESC
                 LIMIT :limit
                 """)
-
-                # Prepare parameters
+                
                 params = {
-                    "query_embedding": query_embedding,
+                    "query_embedding": embedding_str,
                     "org_id": organization_id,
                     "limit": limit
                 }
@@ -293,7 +297,8 @@ class DocumentAnalysisService:
                     chunk_indices_by_doc = {}
 
                     for row in relevant_chunks:
-                        doc_id = row.document_id
+                        # Use file_id as that's the field name in the KnowledgeBase model
+                        doc_id = row.file_id
                         chunk_idx = row.chunk_index
                         document_ids.add(doc_id)
 
