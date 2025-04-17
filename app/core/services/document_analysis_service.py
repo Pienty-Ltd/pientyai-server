@@ -169,7 +169,7 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 query = select(KnowledgeBase).where(
-                    KnowledgeBase.document_id == document_id).order_by(
+                    KnowledgeBase.file_id == document_id).order_by(
                         KnowledgeBase.chunk_index)
 
                 result = await session.execute(query)
@@ -233,7 +233,7 @@ class DocumentAnalysisService:
 
                 # Exclude the current document if provided
                 if current_document_id is not None:
-                    filter_conditions.append("kb.document_id != :doc_id")
+                    filter_conditions.append("kb.file_id != :doc_id")
 
                 # Combine all filter conditions
                 filter_sql = " AND ".join(filter_conditions)
@@ -243,7 +243,7 @@ class DocumentAnalysisService:
                 WITH similarity_results AS (
                     SELECT kb.*, 
                            kb.embedding <=> :query_embedding AS distance,
-                           row_number() OVER (PARTITION BY kb.document_id ORDER BY kb.embedding <=> :query_embedding) as doc_rank
+                           row_number() OVER (PARTITION BY kb.file_id ORDER BY kb.embedding <=> :query_embedding) as doc_rank
                     FROM knowledge_base kb
                     WHERE {filter_sql}
                     ORDER BY kb.embedding <=> :query_embedding
@@ -295,7 +295,7 @@ class DocumentAnalysisService:
                     # This is more efficient than making multiple queries
                     adjacent_query = f"""
                     SELECT * FROM knowledge_base 
-                    WHERE document_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
+                    WHERE file_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
                     """
                     result = await session.execute(
                         adjacent_query, {"doc_ids": list(document_ids)})
@@ -303,14 +303,13 @@ class DocumentAnalysisService:
 
                     # Filter to get only the chunks we want (primary + adjacent)
                     for chunk in all_chunks:
-                        doc_id = chunk.document_id
+                        doc_id = chunk.file_id
                         if doc_id in chunk_indices_by_doc and chunk.chunk_index in chunk_indices_by_doc[
                                 doc_id]:
                             # Create KnowledgeBase object
                             kb_chunk = KnowledgeBase(
                                 id=chunk.id,
                                 organization_id=chunk.organization_id,
-                                document_id=chunk.document_id,
                                 file_id=chunk.file_id,
                                 chunk_index=chunk.chunk_index,
                                 content=chunk.content,
@@ -324,9 +323,9 @@ class DocumentAnalysisService:
                             )
                             relevant_kb_chunks.append(kb_chunk)
 
-                # Sort the chunks by document ID and chunk index to preserve the original structure
+                # Sort the chunks by file ID and chunk index to preserve the original structure
                 relevant_kb_chunks.sort(
-                    key=lambda x: (x.document_id, x.chunk_index))
+                    key=lambda x: (x.file_id, x.chunk_index))
 
                 return relevant_kb_chunks
 
