@@ -353,7 +353,6 @@ class DocumentAnalysisService:
                 # Create new analysis record
                 analysis = DocumentAnalysis(
                     document_id=document_id,
-                    document_fp=file.fp,
                     organization_id=organization_id,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
@@ -388,7 +387,6 @@ class DocumentAnalysisService:
                 # Create new analysis record
                 analysis = DocumentAnalysis(
                     document_id=file.id,
-                    document_fp=document_fp,
                     organization_id=organization_id,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
