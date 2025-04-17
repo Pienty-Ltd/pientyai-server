@@ -5,7 +5,7 @@ import logging
 import asyncio
 import math
 from datetime import datetime
-from sqlalchemy import select, func, desc, and_, or_, text
+from sqlalchemy import select, func, desc, and_, or_
 
 from app.core.services.openai_service import OpenAIService
 from app.core.services.document_service import DocumentService
@@ -29,8 +29,7 @@ class DocumentAnalysisService:
             organization_id: int,
             document_id: int,
             user_id: int,
-            max_relevant_chunks: int = 5,
-            analysis_id: Optional[int] = None) -> Dict[str, Any]:
+            max_relevant_chunks: int = 5) -> Dict[str, Any]:
         """
         Analyze a document against the organization's knowledge base
         
@@ -39,149 +38,341 @@ class DocumentAnalysisService:
             document_id: ID of the document to analyze
             user_id: ID of the user requesting the analysis
             max_relevant_chunks: Maximum number of relevant chunks to retrieve from knowledge base
-            analysis_id: Optional ID of an existing analysis record to use instead of creating a new one
             
         Returns:
             Dictionary containing the analysis results
         """
-        # Define analysis_record at the beginning to avoid unbound variable errors
-        analysis_record = None
         try:
             logger.info(
                 f"Starting document analysis for doc {document_id} in organization {organization_id}"
             )
 
-            # Get existing analysis record or create a new one if not provided
-            if analysis_id:
-                async with async_session_maker() as session:
-                    stmt = select(DocumentAnalysis).where(
-                        DocumentAnalysis.id == analysis_id)
-                    result = await session.execute(stmt)
-                    analysis_record = result.scalar_one_or_none()
+            # Create a record to track the analysis
+            analysis_record = await self.create_analysis_record(
+                document_id=document_id,
+                organization_id=organization_id,
+                user_id=user_id)
 
-                    if not analysis_record:
-                        logger.warning(
-                            f"Analysis record with ID {analysis_id} not found, creating new one"
-                        )
-                        analysis_record = await self.create_analysis_record(
-                            document_id, organization_id, user_id)
-            else:
-                # Create a record to track the analysis
-                analysis_record = await self.create_analysis_record(
-                    document_id, organization_id, user_id)
+            start_time = datetime.now()
 
-            if not analysis_record:
-                raise Exception(
-                    f"Failed to create analysis record for document {document_id}"
-                )
+            # Fetch the document to be analyzed
+            document = await self.document_service.get_document_by_id(
+                organization_id, document_id)
+            if not document:
+                error_msg = f"Document not found: {document_id}"
+                await self.update_analysis_status(analysis_record.id,
+                                                  AnalysisStatus.FAILED,
+                                                  error_msg)
+                raise ValueError(error_msg)
 
-            # Update status to processing
+            if document.status != "completed":
+                error_msg = f"Document processing is not complete. Current status: {document.status}"
+                await self.update_analysis_status(analysis_record.id,
+                                                  AnalysisStatus.FAILED,
+                                                  error_msg)
+                raise ValueError(error_msg)
+
+            # Update the status to processing
             await self.update_analysis_status(analysis_record.id,
                                               AnalysisStatus.PROCESSING)
 
-            # Get document chunks
+            # Get the original document content - we'll join all chunks to represent the original content
             document_chunks = await self.get_document_chunks(document_id)
 
             if not document_chunks:
-                await self.update_analysis_status(
-                    analysis_record.id, AnalysisStatus.FAILED,
-                    "Document has no content to analyze.")
-                return {"error": "Document has no content to analyze."}
+                error_msg = f"No chunks found for document {document_id}"
+                await self.update_analysis_status(analysis_record.id,
+                                                  AnalysisStatus.FAILED,
+                                                  error_msg)
+                raise ValueError(error_msg)
 
-            # Get the original document text to store in the analysis record
-            original_content = "\n\n".join(chunk.content
-                                           for chunk in document_chunks
-                                           if chunk.content)
-
-            # Update original content in the analysis record
+            # Store the original content (concatenated chunks)
+            original_content = "\n\n".join(
+                [chunk.content for chunk in document_chunks])
             await self.update_original_content(analysis_record.id,
                                                original_content)
 
-            # Process each chunk against knowledge base
-            chunk_analyses = []
-            total_processing_time = 0.0
-
-            for i, chunk in enumerate(document_chunks):
-                if not chunk.content or not chunk.content.strip():
-                    continue
-
-                logger.debug(
-                    f"Processing chunk {i+1}/{len(document_chunks)} (document {document_id})"
-                )
-
-                # Find related knowledge base chunks
-                relevant_chunks = await self.find_relevant_knowledge_base_chunks(
-                    organization_id,
-                    chunk.content,
-                    current_document_id=document_id,
-                    limit=max_relevant_chunks)
-
-                # Skip if no relevant chunks found - nothing to compare against
-                if not relevant_chunks:
-                    logger.warning(
-                        f"No relevant knowledge base chunks found for chunk {i+1}"
-                    )
-                    continue
-
-                # Analyze this chunk against knowledge base
-                start_time = datetime.now()
-                chunk_result = await self.openai_service.analyze_document_chunk_with_git_diff(
-                    chunk.content, relevant_chunks)
-                end_time = datetime.now()
-                processing_time = (end_time - start_time).total_seconds()
-                total_processing_time += processing_time
-
-                # Add chunk index and processing time to the chunk results
-                chunk_result["chunk_index"] = i
-                chunk_result["processing_time_seconds"] = processing_time
-                chunk_result["original_text"] = chunk.content
-
-                # Process and store results
-                chunk_analyses.append(chunk_result)
-
-            # Calculate the git-like diff changes
-            diff_changes = ""
-            for chunk in chunk_analyses:
-                if "diff_changes" in chunk and chunk["diff_changes"]:
-                    diff_changes += chunk["diff_changes"] + "\n\n"
-
-            diff_changes = diff_changes.strip()
-
-            # Create the final analysis result
-            analysis_result = {
-                "document_id": document_id,
-                "organization_id": organization_id,
-                "diff_changes": diff_changes,
-                "total_chunks_analyzed": len(chunk_analyses),
-                "processing_time_seconds": total_processing_time,
-                "chunk_analyses": chunk_analyses,
-                "status": "completed",
-                "created_at": datetime.now().isoformat(),
-                "completed_at": datetime.now().isoformat()
-            }
-
-            # Update the analysis record with the results
-            await self.update_analysis_record(analysis_record.id,
-                                              analysis_result,
-                                              AnalysisStatus.COMPLETED)
+            # Set up tracking variables for analysis
+            total_chunks = len(document_chunks)
 
             logger.info(
-                f"Completed document analysis for doc {document_id} in organization {organization_id}"
+                f"Processing {total_chunks} chunks for document {document_id}")
+
+            # Consolidated approach: Gather knowledge base chunks for all document chunks,
+            # then perform a single analysis
+            logger.info(
+                f"Running consolidated document analysis process with comprehensive knowledge base collection"
             )
 
-            return analysis_result
+            # Collect relevant knowledge base chunks for EACH document chunk to ensure extensive coverage
+            logger.info(
+                f"Finding relevant KB chunks for all {total_chunks} chunks in the document"
+            )
+
+            full_document_content = original_content
+
+            # Set to track unique knowledge base chunks across all chunk searches
+            all_relevant_kb_chunks = set()  # Using a set to avoid duplicates
+
+            # Process each document chunk to find relevant KB chunks
+            for chunk_idx, doc_chunk in enumerate(document_chunks):
+                chunk_content = doc_chunk.content
+                logger.info(
+                    f"Finding relevant KB chunks for chunk {chunk_idx+1}/{total_chunks}"
+                )
+
+                # Find the most relevant chunks from the knowledge base for this specific chunk
+                # Use the document chunk's existing embedding if available
+                doc_embedding = None
+                if hasattr(doc_chunk,
+                           'embedding') and doc_chunk.embedding is not None:
+                    # Use the embedding as is
+                    doc_embedding = doc_chunk.embedding
+
+                chunk_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+                    organization_id=organization_id,
+                    query_text=chunk_content,
+                    current_document_id=document_id,  # Exclude the current document from search
+                    limit=max_relevant_chunks,  # Get context specific to this chunk
+                    query_embedding=doc_embedding)
+
+                # Add all relevant chunks to our global set, tracking by file_id and chunk_index
+                # Also add sufficient context by including adjacent chunks when available
+                for kb_chunk in chunk_relevant_kb:
+                    # Add the current chunk
+                    chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                    all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+
+                    # Try to get and add all surrounding chunks too for better context
+                    try:
+                        # Get adjacent chunks for better context (2 before and 2 after)
+                        # This helps with cases where information is split across chunks
+                        async with async_session_maker() as session:
+                            # Get up to 2 chunks before
+                            before_query = select(KnowledgeBase).where(
+                                KnowledgeBase.file_id == kb_chunk.file_id,
+                                KnowledgeBase.is_knowledge_base == True,
+                                KnowledgeBase.chunk_index
+                                < kb_chunk.chunk_index).order_by(
+                                    desc(KnowledgeBase.chunk_index)).limit(2)
+
+                            before_result = await session.execute(before_query)
+                            before_chunks = before_result.scalars().all()
+
+                            # Get up to 2 chunks after
+                            after_query = select(KnowledgeBase).where(
+                                KnowledgeBase.file_id == kb_chunk.file_id,
+                                KnowledgeBase.is_knowledge_base == True,
+                                KnowledgeBase.chunk_index
+                                > kb_chunk.chunk_index).order_by(
+                                    KnowledgeBase.chunk_index).limit(2)
+
+                            after_result = await session.execute(after_query)
+                            after_chunks = after_result.scalars().all()
+
+                            # Add all adjacent chunks to our set
+                            for adj_chunk in before_chunks + after_chunks:
+                                adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
+                                all_relevant_kb_chunks.add(
+                                    (adj_key, adj_chunk))
+                    except Exception as e:
+                        logger.warning(
+                            f"Error getting adjacent chunks: {str(e)}")
+                        # Continue with the process even if getting adjacent chunks fails
+
+            logger.info(
+                f"Collected {len(all_relevant_kb_chunks)} unique KB chunks across all document chunks"
+            )
+
+            # Also search using the full document text to catch overall context
+            logger.info(
+                f"Finding additional KB chunks using the full document content"
+            )
+
+            # Prepare embedding for the full document if any document chunks have embeddings
+            full_doc_embedding = None
+            # Simple approach: Use the first document chunk's embedding if available
+            if document_chunks and hasattr(
+                    document_chunks[0],
+                    'embedding') and document_chunks[0].embedding is not None:
+                # Use the embedding as is
+                full_doc_embedding = document_chunks[0].embedding
+                logger.info(
+                    f"Using existing embedding from document chunks for full document analysis"
+                )
+
+            full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
+                organization_id=organization_id,
+                query_text=full_document_content,
+                current_document_id=document_id,
+                limit=max_relevant_chunks * 2,  # Get more chunks for the full document
+                query_embedding=full_doc_embedding)
+
+            # Add these to our set of unique chunks as well along with their adjacent context
+            for kb_chunk in full_doc_relevant_kb:
+                # Add the main chunk
+                chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+
+                # Try to get and add all surrounding chunks too for better context
+                try:
+                    # Get adjacent chunks for better context (2 before and 2 after)
+                    # This helps with cases where information is split across chunks
+                    async with async_session_maker() as session:
+                        # Get up to 2 chunks before
+                        before_query = select(KnowledgeBase).where(
+                            KnowledgeBase.file_id == kb_chunk.file_id,
+                            KnowledgeBase.is_knowledge_base == True,
+                            KnowledgeBase.chunk_index
+                            < kb_chunk.chunk_index).order_by(
+                                desc(KnowledgeBase.chunk_index)).limit(2)
+
+                        before_result = await session.execute(before_query)
+                        before_chunks = before_result.scalars().all()
+
+                        # Get up to 2 chunks after
+                        after_query = select(KnowledgeBase).where(
+                            KnowledgeBase.file_id == kb_chunk.file_id,
+                            KnowledgeBase.is_knowledge_base == True,
+                            KnowledgeBase.chunk_index
+                            > kb_chunk.chunk_index).order_by(
+                                KnowledgeBase.chunk_index).limit(2)
+
+                        after_result = await session.execute(after_query)
+                        after_chunks = after_result.scalars().all()
+
+                        # Add all adjacent chunks to our set
+                        for adj_chunk in before_chunks + after_chunks:
+                            adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
+                            all_relevant_kb_chunks.add((adj_key, adj_chunk))
+                except Exception as e:
+                    logger.warning(f"Error getting adjacent chunks: {str(e)}")
+                    # Continue with the process even if getting adjacent chunks fails
+
+            logger.info(
+                f"Total unique KB chunks after full document search: {len(all_relevant_kb_chunks)}"
+            )
+
+            # Extract the actual chunk objects from the set of tuples
+            document_relevant_kb = [
+                chunk_tuple[1] for chunk_tuple in all_relevant_kb_chunks
+            ]
+
+            # Convert the chunks to a list of KB chunk info dictionaries with rich metadata
+            # Include ALL chunks regardless of similarity score, but sort by similarity for better results
+            consolidated_kb_chunks = []
+
+            # Create a list of chunks with their similarity scores
+            chunks_with_scores = []
+            for kb_chunk in document_relevant_kb:
+                # Get file name for better context
+                file_name = "Unknown"
+                try:
+                    async with async_session_maker() as session:
+                        file_query = select(File).where(
+                            File.id == kb_chunk.file_id)
+                        file_result = await session.execute(file_query)
+                        file = file_result.scalar_one_or_none()
+                        if file:
+                            file_name = file.filename
+                except Exception as e:
+                    logger.error(f"Error retrieving filename: {str(e)}")
+
+                # Get similarity score (default to 0 if not set)
+                similarity_score = getattr(kb_chunk, 'similarity_score', 0)
+
+                # Log the similarity score for debugging
+                logger.debug(
+                    f"KB Chunk {kb_chunk.file_id}_{kb_chunk.chunk_index} has similarity: {similarity_score}"
+                )
+
+                # Create a rich metadata object and add to the list
+                chunk_info = {
+                    "document_name": file_name,
+                    "document_id": kb_chunk.file_id,
+                    "chunk_index": kb_chunk.chunk_index,
+                    "similarity_score": similarity_score,
+                    "content": kb_chunk.content,
+                    "meta_info":
+                    kb_chunk.meta_info if kb_chunk.meta_info else {}
+                }
+                chunks_with_scores.append((chunk_info, similarity_score))
+                logger.debug(
+                    f"Added KB chunk with similarity score: {similarity_score}"
+                )
+
+            # Sort chunks by similarity score (highest first)
+            chunks_with_scores.sort(key=lambda x: x[1], reverse=True)
+
+            # Extract just the chunk info objects, preserving order
+            consolidated_kb_chunks = [
+                chunk_data[0] for chunk_data in chunks_with_scores
+            ]
+
+            logger.info(
+                f"Prepared {len(consolidated_kb_chunks)} KB chunks for analysis"
+            )
+
+            # Now perform a single consolidated analysis with all document content and KB chunks
+            chunk_start_time = datetime.now()
+            
+            # Perform a single analysis with all document content and knowledge base chunks
+            logger.info(f"Performing consolidated analysis with all document content and KB chunks")
+            consolidated_analysis = await self.openai_service.analyze_document(
+                document_chunk=full_document_content,
+                knowledge_base_chunks=consolidated_kb_chunks)
+
+            # Add metadata to the analysis
+            consolidated_analysis["is_consolidated_analysis"] = True
+            consolidated_analysis["processing_time_seconds"] = (
+                datetime.now() - chunk_start_time).total_seconds()
+            consolidated_analysis["total_kb_chunks"] = len(consolidated_kb_chunks)
+            consolidated_analysis["total_document_chunks"] = total_chunks
+
+            # Calculate total processing time
+            total_processing_time = (datetime.now() - start_time).total_seconds()
+
+            # Collect the final response
+            analysis_response = {
+                "analysis": consolidated_analysis,
+                "document": {
+                    "id": document_id,
+                    "name": document.filename if hasattr(document, 'filename') else "Unknown",
+                    "total_chunks": total_chunks
+                },
+                "meta": {
+                    "total_processing_time_seconds": total_processing_time,
+                    "total_kb_chunks_analyzed": len(consolidated_kb_chunks),
+                    "analysis_fp": analysis_record.fp,
+                    "created_at": analysis_record.created_at.isoformat() if hasattr(analysis_record, 'created_at') else None,
+                }
+            }
+
+            # Update the analysis record
+            await self.update_analysis_record(
+                analysis_id=analysis_record.id,
+                analysis_data=analysis_response,
+                status=AnalysisStatus.COMPLETED)
+
+            logger.info(
+                f"Document analysis completed in {total_processing_time:.2f} seconds"
+            )
+
+            return analysis_response
 
         except Exception as e:
-            logger.error(f"Error analyzing document {document_id}: {str(e)}")
-            # If we created an analysis record, update its status to failed
-            try:
-                # Define analysis_record at the top of the function so it's always defined
-                if analysis_record is not None:
-                    await self.update_analysis_status(analysis_record.id,
-                                                    AnalysisStatus.FAILED,
-                                                    str(e))
-            except Exception as inner_exc:
-                logger.error(f"Error updating analysis status: {str(inner_exc)}")
+            logger.error(f"Error in document analysis: {str(e)}", exc_info=True)
+            
+            # Try to update the analysis record if it was created
+            if 'analysis_record' in locals():
+                try:
+                    await self.update_analysis_status(
+                        analysis_record.id, AnalysisStatus.FAILED, str(e))
+                except Exception as update_error:
+                    logger.error(
+                        f"Error updating analysis status: {str(update_error)}")
+
+            # Re-raise the exception
             raise
 
     async def get_document_chunks(self,
@@ -192,13 +383,12 @@ class DocumentAnalysisService:
                 query = select(KnowledgeBase).where(
                     KnowledgeBase.file_id == document_id).order_by(
                         KnowledgeBase.chunk_index)
-
                 result = await session.execute(query)
                 chunks = result.scalars().all()
-                return list(chunks)
+                return chunks
         except Exception as e:
             logger.error(f"Error getting document chunks: {str(e)}")
-            return []
+            raise
 
     async def find_relevant_knowledge_base_chunks(
             self,
@@ -227,153 +417,82 @@ class DocumentAnalysisService:
             List of relevant knowledge base chunks including adjacent chunks for better context
         """
         try:
-            # Sanitize limit
-            if limit < 3:
-                limit = 3
-            elif limit > 10:
-                limit = 10
+            # Ensure limit is within reasonable bounds
+            limit = max(3, min(10, limit))
 
-            # Get the embedding for the query text
-            if query_embedding is None:
+            # Get or create embedding for the query text
+            if not query_embedding:
                 query_embedding = await self.openai_service.get_embedding(
                     query_text)
 
-            if not query_embedding:
-                logger.warning("Failed to generate embedding for query text")
-                return []
-
+            # Use vector similarity search to find the most relevant chunks
+            # Only search in knowledge base chunks (is_knowledge_base=True)
             async with async_session_maker() as session:
-                # We'll use a raw SQL query for vector similarity search
-                # This allows us to efficiently filter by organization and exclude current document
-
-                # Start with a filter for knowledge base chunks only in this organization
-                filter_conditions = [
-                    "kb.organization_id = :org_id",
-                    "kb.is_knowledge_base = TRUE",  # Only use knowledge base chunks
+                # Build the query
+                conditions = [
+                    KnowledgeBase.organization_id == organization_id,
+                    KnowledgeBase.is_knowledge_base == True
                 ]
 
                 # Exclude the current document if provided
-                if current_document_id is not None:
-                    filter_conditions.append("kb.file_id != :doc_id")
+                if current_document_id:
+                    conditions.append(KnowledgeBase.file_id != current_document_id)
 
-                # Combine all filter conditions (used for non-pgvector version)
-                # We're now using a direct SQL approach with vector embedding
-                # filter_sql = " AND ".join(filter_conditions)
+                # For PostgreSQL with pgvector, use the <=> operator for cosine distance
+                # 'embedding::vector <=> :query_embedding::vector AS similarity_score'
+                # More relevant chunks have lower cosine distance
+                from sqlalchemy import text
+                embedding_string = json.dumps(query_embedding)
 
-                # PostgreSQL pgvector sorgu formatını düzenle
-                # Vektör formatını koruyalım, köşeli parantezler gerekli
-                embedding_str = str(query_embedding)
-                
-                # Vektör embeddingi için doğrudan SQL sorgusu formatla (pgvector özel syntax gerekiyor)
-                # PostgreSQL pgvector eklentisi bind parametreleriyle bazen sorun yaşayabiliyor
-                vector_portion = f"1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score"
-                
-                # Diğer parametreler için bind kullan
                 sql_query = text(f"""
-                SELECT 
-                    kb.*,
-                    {vector_portion}
-                FROM 
-                    knowledge_base kb
-                WHERE 
-                    kb.organization_id = :org_id AND
-                    kb.is_knowledge_base = TRUE
-                """ + (" AND kb.file_id != :doc_id" if current_document_id is not None else "") + """
-                ORDER BY 
-                    similarity_score DESC
-                LIMIT :limit
+                    WITH similarity_results AS (
+                        SELECT
+                            *,
+                            embedding::vector <=> :query_embedding::vector AS similarity_score
+                        FROM knowledge_base
+                        WHERE organization_id = :organization_id
+                          AND is_knowledge_base = true
+                          {f"AND file_id != :current_document_id" if current_document_id else ""}
+                        ORDER BY similarity_score ASC
+                        LIMIT :limit
+                    )
+                    SELECT * FROM similarity_results
                 """)
 
-                params = {
-                    "org_id": organization_id,
-                    "limit": limit
-                }
+                result = await session.execute(
+                    sql_query,
+                    {
+                        "query_embedding": embedding_string,
+                        "organization_id": organization_id,
+                        "current_document_id": current_document_id,
+                        "limit": limit
+                    })
 
-                # Add document ID parameter if needed
-                if current_document_id is not None:
-                    params["doc_id"] = current_document_id
+                # Convert the result to KnowledgeBase objects
+                relevant_chunks = []
+                for row in result:
+                    chunk = KnowledgeBase(
+                        id=row.id,
+                        fp=row.fp,
+                        organization_id=row.organization_id,
+                        file_id=row.file_id,
+                        chunk_index=row.chunk_index,
+                        content=row.content,
+                        embedding=row.embedding,
+                        meta_info=row.meta_info,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at,
+                    )
+                    # Add the similarity score as an attribute
+                    setattr(chunk, 'similarity_score', row.similarity_score)
+                    relevant_chunks.append(chunk)
 
-                # Execute the query with error handling
-                try:
-                    # Log the vector format for better debugging
-                    vector_log = embedding_str[:100] + "..." if len(embedding_str) > 100 else embedding_str
-                    logger.debug(f"Vector format being used: {vector_log}")
-                    logger.debug(f"Executing vector search query with params: {params}")
-                    
-                    result = await session.execute(sql_query, params)
-                    relevant_chunks = result.fetchall()
-                    logger.info(f"Vector search found {len(relevant_chunks)} relevant chunks") 
-                except Exception as query_exc:
-                    logger.error(f"Vector search query failed: {str(query_exc)}")
-                    logger.error(f"SQL Query attempted: {sql_query}")
-                    # Return an empty list instead of raising to not block the entire flow
-                    return []
-
-                # Convert raw results to KnowledgeBase objects
-                relevant_kb_chunks = []
-
-                # If we found any relevant chunks, get their adjacent chunks for context
-                if relevant_chunks:
-                    # Extract document IDs and chunk indices from relevant chunks
-                    document_ids = set()
-                    chunk_indices_by_doc = {}
-
-                    for row in relevant_chunks:
-                        # Use file_id as that's the field name in the KnowledgeBase model
-                        doc_id = row.file_id
-                        chunk_idx = row.chunk_index
-                        document_ids.add(doc_id)
-
-                        if doc_id not in chunk_indices_by_doc:
-                            chunk_indices_by_doc[doc_id] = set()
-                        chunk_indices_by_doc[doc_id].add(chunk_idx)
-
-                        # Also include adjacent chunks (2 before and 2 after)
-                        for adj_idx in range(chunk_idx - 2, chunk_idx + 3):
-                            if adj_idx >= 0:  # Ensure non-negative index
-                                chunk_indices_by_doc[doc_id].add(adj_idx)
-
-                    # Fetch all the chunks in a single query
-                    # This is more efficient than making multiple queries
-                    adjacent_query = text("""
-                    SELECT * FROM knowledge_base 
-                    WHERE file_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
-                    """)
-                    result = await session.execute(
-                        adjacent_query, {"doc_ids": list(document_ids)})
-                    all_chunks = result.fetchall()
-
-                    # Filter to get only the chunks we want (primary + adjacent)
-                    for chunk in all_chunks:
-                        doc_id = chunk.file_id
-                        if doc_id in chunk_indices_by_doc and chunk.chunk_index in chunk_indices_by_doc[
-                                doc_id]:
-                            # Create KnowledgeBase object
-                            kb_chunk = KnowledgeBase(
-                                id=chunk.id,
-                                organization_id=chunk.organization_id,
-                                file_id=chunk.file_id,
-                                chunk_index=chunk.chunk_index,
-                                content=chunk.content,
-                                is_knowledge_base=chunk.is_knowledge_base,
-                                embedding=chunk.embedding if hasattr(
-                                    chunk, 'embedding') else None,
-                                meta_info=chunk.meta_info if hasattr(
-                                    chunk, 'meta_info') else None,
-                                created_at=chunk.created_at,
-                                updated_at=chunk.updated_at,
-                            )
-                            relevant_kb_chunks.append(kb_chunk)
-
-                # Sort the chunks by file ID and chunk index to preserve the original structure
-                relevant_kb_chunks.sort(
-                    key=lambda x: (x.file_id, x.chunk_index))
-
-                return relevant_kb_chunks
-
+            return relevant_chunks
         except Exception as e:
             logger.error(
-                f"Error finding relevant knowledge base chunks: {str(e)}")
+                f"Error finding relevant knowledge base chunks: {str(e)}",
+                exc_info=True)
+            # Return empty list in case of error to allow the process to continue
             return []
 
     async def create_analysis_record(self, document_id: int,
@@ -382,30 +501,32 @@ class DocumentAnalysisService:
         """Create a new document analysis record in pending state using document ID"""
         try:
             async with async_session_maker() as session:
-                # Get the document details
-                stmt = select(File).where(File.id == document_id)
-                result = await session.execute(stmt)
-                file = result.scalar_one_or_none()
+                # Get the document
+                document_query = select(File).where(File.id == document_id)
+                document_result = await session.execute(document_query)
+                document = document_result.scalar_one_or_none()
 
-                if not file:
-                    raise Exception(
-                        f"Document with ID {document_id} not found")
+                if not document:
+                    raise ValueError(f"Document not found: {document_id}")
 
-                # Create new analysis record
-                analysis = DocumentAnalysis(
-                    document_id=document_id,
+                # Create a new analysis record
+                import uuid
+                new_analysis = DocumentAnalysis(
+                    fp=f"analysis_{uuid.uuid4().hex[:20]}",
                     organization_id=organization_id,
+                    document_id=document_id,
+                    document_fp=document.fp,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
-                    created_at=datetime.now(),
+                    original_content=None,  # Will be updated later
+                    results=None,  # Will be updated with analysis results
                 )
 
-                session.add(analysis)
+                session.add(new_analysis)
                 await session.commit()
-                await session.refresh(analysis)
+                await session.refresh(new_analysis)
 
-                return analysis
-
+                return new_analysis
         except Exception as e:
             logger.error(f"Error creating analysis record: {str(e)}")
             raise
@@ -416,61 +537,75 @@ class DocumentAnalysisService:
         """Create a new document analysis record in pending state using document fingerprint (fp)"""
         try:
             async with async_session_maker() as session:
-                # Get the document details
-                stmt = select(File).where(File.fp == document_fp)
-                result = await session.execute(stmt)
-                file = result.scalar_one_or_none()
+                # Get the document
+                document_query = select(File).where(File.fp == document_fp)
+                document_result = await session.execute(document_query)
+                document = document_result.scalar_one_or_none()
 
-                if not file:
-                    raise Exception(
-                        f"Document with fp {document_fp} not found")
+                if not document:
+                    raise ValueError(f"Document not found: {document_fp}")
 
-                # Create new analysis record
-                analysis = DocumentAnalysis(
-                    document_id=file.id,
+                # Create a new analysis record
+                import uuid
+                new_analysis = DocumentAnalysis(
+                    fp=f"analysis_{uuid.uuid4().hex[:20]}",
                     organization_id=organization_id,
+                    document_id=document.id,
+                    document_fp=document_fp,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
-                    created_at=datetime.now(),
+                    original_content=None,  # Will be updated later
+                    results=None,  # Will be updated with analysis results
                 )
 
-                session.add(analysis)
+                session.add(new_analysis)
                 await session.commit()
-                await session.refresh(analysis)
+                await session.refresh(new_analysis)
 
-                return analysis
-
+                return new_analysis
         except Exception as e:
-            logger.error(f"Error creating analysis record by fp: {str(e)}")
+            logger.error(f"Error creating analysis record: {str(e)}")
             raise
 
     async def get_analysis_by_id(
             self, analysis_id: int) -> Optional[DocumentAnalysis]:
         """Get analysis record by ID"""
-        async with async_session_maker() as session:
-            stmt = select(DocumentAnalysis).where(
-                DocumentAnalysis.id == analysis_id)
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+        try:
+            async with async_session_maker() as session:
+                query = select(DocumentAnalysis).where(
+                    DocumentAnalysis.id == analysis_id)
+                result = await session.execute(query)
+                return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Error getting analysis by ID: {str(e)}")
+            return None
 
     async def get_analysis_by_fp(
             self, analysis_fp: str) -> Optional[DocumentAnalysis]:
         """Get analysis record by fingerprint (fp)"""
-        async with async_session_maker() as session:
-            stmt = select(DocumentAnalysis).where(
-                DocumentAnalysis.fp == analysis_fp)
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+        try:
+            async with async_session_maker() as session:
+                query = select(DocumentAnalysis).where(
+                    DocumentAnalysis.fp == analysis_fp)
+                result = await session.execute(query)
+                return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Error getting analysis by FP: {str(e)}")
+            return None
 
     async def get_analysis_by_document_id(
             self, document_id: int) -> List[DocumentAnalysis]:
         """Get all analysis records for a document, ordered by creation date"""
-        async with async_session_maker() as session:
-            stmt = select(DocumentAnalysis).where(
-                DocumentAnalysis.document_id == document_id).order_by(
-                    desc(DocumentAnalysis.created_at))
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
+        try:
+            async with async_session_maker() as session:
+                query = select(DocumentAnalysis).where(
+                    DocumentAnalysis.document_id == document_id).order_by(
+                        desc(DocumentAnalysis.created_at))
+                result = await session.execute(query)
+                return result.scalars().all()
+        except Exception as e:
+            logger.error(f"Error getting analysis by document ID: {str(e)}")
+            return []
 
     async def get_analyses_for_organization(
         self,
@@ -480,31 +615,36 @@ class DocumentAnalysisService:
         status_filter: Optional[str] = None
     ) -> Tuple[List[DocumentAnalysis], int, int]:
         """Get analyses for a specific organization with pagination"""
-        async with async_session_maker() as session:
-            # Base query filters
-            filters = [DocumentAnalysis.organization_id == organization_id]
-
-            # Add status filter if provided
-            if status_filter:
-                filters.append(DocumentAnalysis.status == status_filter)
-
-            # Count total matching analyses
-            count_stmt = select(
-                func.count()).select_from(DocumentAnalysis).where(*filters)
-            count_result = await session.execute(count_stmt)
-            total_count = count_result.scalar()
-
-            # Calculate total pages
-            total_pages = math.ceil(total_count / per_page)
-
-            # Get the paginated results
-            stmt = select(DocumentAnalysis).where(*filters).order_by(
-                desc(DocumentAnalysis.created_at)).offset(
-                    (page - 1) * per_page).limit(per_page)
-            result = await session.execute(stmt)
-            analyses = list(result.scalars().all())
-
-            return analyses, total_count, total_pages
+        try:
+            async with async_session_maker() as session:
+                # Build conditions for the query
+                conditions = [DocumentAnalysis.organization_id == organization_id]
+                
+                # Add status filter if provided
+                if status_filter:
+                    conditions.append(DocumentAnalysis.status == status_filter)
+                
+                # Count total records
+                count_query = select(func.count()).select_from(DocumentAnalysis).where(
+                    and_(*conditions))
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar_one()
+                
+                # Calculate pagination
+                total_pages = math.ceil(total_count / per_page) if total_count > 0 else 1
+                offset = (page - 1) * per_page
+                
+                # Get paginated records
+                query = select(DocumentAnalysis).where(
+                    and_(*conditions)).order_by(
+                        desc(DocumentAnalysis.created_at)).offset(offset).limit(per_page)
+                result = await session.execute(query)
+                analyses = result.scalars().all()
+                
+                return analyses, total_count, total_pages
+        except Exception as e:
+            logger.error(f"Error getting analyses for organization: {str(e)}")
+            return [], 0, 1
 
     async def get_analyses_for_user(
         self,
@@ -514,33 +654,39 @@ class DocumentAnalysisService:
         status_filter: Optional[str] = None
     ) -> Tuple[List[DocumentAnalysis], int, int]:
         """Get analyses across all organizations a user has access to"""
-        async with async_session_maker() as session:
-            # Base query filter - analyses from organizations the user has access to
-            filters = [
-                DocumentAnalysis.organization_id.in_(user_organization_ids)
-            ]
-
-            # Add status filter if provided
-            if status_filter:
-                filters.append(DocumentAnalysis.status == status_filter)
-
-            # Count total matching analyses
-            count_stmt = select(
-                func.count()).select_from(DocumentAnalysis).where(*filters)
-            count_result = await session.execute(count_stmt)
-            total_count = count_result.scalar()
-
-            # Calculate total pages
-            total_pages = math.ceil(total_count / per_page)
-
-            # Get the paginated results
-            stmt = select(DocumentAnalysis).where(*filters).order_by(
-                desc(DocumentAnalysis.created_at)).offset(
-                    (page - 1) * per_page).limit(per_page)
-            result = await session.execute(stmt)
-            analyses = list(result.scalars().all())
-
-            return analyses, total_count, total_pages
+        try:
+            if not user_organization_ids:
+                return [], 0, 1
+                
+            async with async_session_maker() as session:
+                # Build conditions for the query
+                conditions = [DocumentAnalysis.organization_id.in_(user_organization_ids)]
+                
+                # Add status filter if provided
+                if status_filter:
+                    conditions.append(DocumentAnalysis.status == status_filter)
+                
+                # Count total records
+                count_query = select(func.count()).select_from(DocumentAnalysis).where(
+                    and_(*conditions))
+                count_result = await session.execute(count_query)
+                total_count = count_result.scalar_one()
+                
+                # Calculate pagination
+                total_pages = math.ceil(total_count / per_page) if total_count > 0 else 1
+                offset = (page - 1) * per_page
+                
+                # Get paginated records
+                query = select(DocumentAnalysis).where(
+                    and_(*conditions)).order_by(
+                        desc(DocumentAnalysis.created_at)).offset(offset).limit(per_page)
+                result = await session.execute(query)
+                analyses = result.scalars().all()
+                
+                return analyses, total_count, total_pages
+        except Exception as e:
+            logger.error(f"Error getting analyses for user: {str(e)}")
+            return [], 0, 1
 
     async def update_analysis_status(
             self,
@@ -551,30 +697,11 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-
                 if analysis:
                     analysis.status = status
-
-                    # Set completed_at timestamp if status is completed or failed
-                    if status in [
-                            AnalysisStatus.COMPLETED, AnalysisStatus.FAILED
-                    ]:
-                        analysis.completed_at = datetime.now()
-
-                    # Store error message if provided
-                    if error_message and status == AnalysisStatus.FAILED:
-                        # Store error message directly in error_message column
-                        analysis.error_message = error_message
-
+                    analysis.error_message = error_message
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.info(
-                        f"Updated analysis {analysis_id} status to {status.value}"
-                    )
-                else:
-                    logger.warning(
-                        f"Analysis record with ID {analysis_id} not found for status update"
-                    )
-
         except Exception as e:
             logger.error(f"Error updating analysis status: {str(e)}")
             raise
@@ -587,36 +714,18 @@ class DocumentAnalysisService:
         """Update the status of an analysis record by fingerprint"""
         try:
             async with async_session_maker() as session:
-                stmt = select(DocumentAnalysis).where(
+                query = select(DocumentAnalysis).where(
                     DocumentAnalysis.fp == analysis_fp)
-                result = await session.execute(stmt)
+                result = await session.execute(query)
                 analysis = result.scalar_one_or_none()
-
+                
                 if analysis:
                     analysis.status = status
-
-                    # Set completed_at timestamp if status is completed or failed
-                    if status in [
-                            AnalysisStatus.COMPLETED, AnalysisStatus.FAILED
-                    ]:
-                        analysis.completed_at = datetime.now()
-
-                    # Store error message if provided
-                    if error_message and status == AnalysisStatus.FAILED:
-                        # Store error message directly in error_message column
-                        analysis.error_message = error_message
-
+                    analysis.error_message = error_message
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.info(
-                        f"Updated analysis {analysis_fp} status to {status.value}"
-                    )
-                else:
-                    logger.warning(
-                        f"Analysis record with fingerprint {analysis_fp} not found for status update"
-                    )
-
         except Exception as e:
-            logger.error(f"Error updating analysis status by fp: {str(e)}")
+            logger.error(f"Error updating analysis status by FP: {str(e)}")
             raise
 
     async def update_original_content(self, analysis_id: int,
@@ -625,17 +734,10 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-
                 if analysis:
                     analysis.original_content = content
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.debug(
-                        f"Updated original content for analysis {analysis_id}")
-                else:
-                    logger.warning(
-                        f"Analysis record with ID {analysis_id} not found for content update"
-                    )
-
         except Exception as e:
             logger.error(f"Error updating original content: {str(e)}")
             raise
@@ -645,23 +747,17 @@ class DocumentAnalysisService:
         """Update the original content of an analysis record by fingerprint"""
         try:
             async with async_session_maker() as session:
-                stmt = select(DocumentAnalysis).where(
+                query = select(DocumentAnalysis).where(
                     DocumentAnalysis.fp == analysis_fp)
-                result = await session.execute(stmt)
+                result = await session.execute(query)
                 analysis = result.scalar_one_or_none()
-
+                
                 if analysis:
                     analysis.original_content = content
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.debug(
-                        f"Updated original content for analysis {analysis_fp}")
-                else:
-                    logger.warning(
-                        f"Analysis record with fp {analysis_fp} not found for content update"
-                    )
-
         except Exception as e:
-            logger.error(f"Error updating original content by fp: {str(e)}")
+            logger.error(f"Error updating original content by FP: {str(e)}")
             raise
 
     async def update_analysis_record(
@@ -673,37 +769,11 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
-
                 if analysis:
-                    # Update status
+                    analysis.results = analysis_data
                     analysis.status = status
-                    analysis.completed_at = datetime.now()
-
-                    # Update diff_changes
-                    if "diff_changes" in analysis_data:
-                        analysis.diff_changes = analysis_data["diff_changes"]
-
-                    # Update fields with analysis data directly
-                    if "total_chunks_analyzed" in analysis_data:
-                        analysis.total_chunks_analyzed = analysis_data[
-                            "total_chunks_analyzed"]
-
-                    if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data[
-                            "processing_time_seconds"]
-
-                    if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data[
-                            "chunk_analyses"]
-
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.info(
-                        f"Updated analysis record with ID {analysis_id}")
-                else:
-                    logger.warning(
-                        f"Analysis record with ID {analysis_id} not found for update"
-                    )
-
         except Exception as e:
             logger.error(f"Error updating analysis record: {str(e)}")
             raise
@@ -716,42 +786,16 @@ class DocumentAnalysisService:
         """Update an analysis record with analysis results by fingerprint"""
         try:
             async with async_session_maker() as session:
-                stmt = select(DocumentAnalysis).where(
+                query = select(DocumentAnalysis).where(
                     DocumentAnalysis.fp == analysis_fp)
-                result = await session.execute(stmt)
+                result = await session.execute(query)
                 analysis = result.scalar_one_or_none()
-
+                
                 if analysis:
-                    # Update status
+                    analysis.results = analysis_data
                     analysis.status = status
-                    analysis.completed_at = datetime.now()
-
-                    # Update diff_changes
-                    if "diff_changes" in analysis_data:
-                        analysis.diff_changes = analysis_data["diff_changes"]
-
-                    # Update fields with analysis data directly
-                    if "total_chunks_analyzed" in analysis_data:
-                        analysis.total_chunks_analyzed = analysis_data[
-                            "total_chunks_analyzed"]
-
-                    if "processing_time_seconds" in analysis_data:
-                        analysis.processing_time_seconds = analysis_data[
-                            "processing_time_seconds"]
-
-                    if "chunk_analyses" in analysis_data:
-                        analysis.chunk_analyses = analysis_data[
-                            "chunk_analyses"]
-
+                    analysis.updated_at = datetime.now()
                     await session.commit()
-                    logger.info(
-                        f"Updated analysis record with fp {analysis_fp} with git-like diff changes"
-                    )
-                else:
-                    logger.warning(
-                        f"Analysis record with fp {analysis_fp} not found for update"
-                    )
-
         except Exception as e:
-            logger.error(f"Error updating analysis record: {str(e)}")
+            logger.error(f"Error updating analysis record by FP: {str(e)}")
             raise
