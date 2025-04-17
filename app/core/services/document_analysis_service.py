@@ -518,8 +518,8 @@ class DocumentAnalysisService:
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
                     original_content=None,  # Will be updated later
-                    # Store document fingerprint in results temporarily
-                    results={"document_fp": document.fp}
+                    # Using chunk_analyses JSON field to store metadata temporarily
+                    chunk_analyses={"document_fp": document.fp}
                 )
 
                 session.add(new_analysis)
@@ -554,8 +554,8 @@ class DocumentAnalysisService:
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
                     original_content=None,  # Will be updated later
-                    # Store document fingerprint in results temporarily
-                    results={"document_fp": document_fp}
+                    # Using chunk_analyses JSON field to store metadata temporarily
+                    chunk_analyses={"document_fp": document_fp}
                 )
 
                 session.add(new_analysis)
@@ -770,7 +770,20 @@ class DocumentAnalysisService:
             async with async_session_maker() as session:
                 analysis = await session.get(DocumentAnalysis, analysis_id)
                 if analysis:
-                    analysis.results = analysis_data
+                    # Convert to appropriate fields
+                    # Extract data from analysis_data for each field in the model
+                    if "diff_changes" in analysis_data:
+                        analysis.diff_changes = analysis_data["diff_changes"]
+                    
+                    # Store processing metrics
+                    if "processing_time_seconds" in analysis_data:
+                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
+                    
+                    if "total_chunks_analyzed" in analysis_data:
+                        analysis.total_chunks_analyzed = analysis_data.get("total_chunks_analyzed", 0)
+                    
+                    # Store any remaining data in chunk_analyses JSON field
+                    analysis.chunk_analyses = analysis_data
                     analysis.status = status
                     analysis.updated_at = datetime.now()
                     await session.commit()
@@ -792,7 +805,20 @@ class DocumentAnalysisService:
                 analysis = result.scalar_one_or_none()
                 
                 if analysis:
-                    analysis.results = analysis_data
+                    # Convert to appropriate fields
+                    # Extract data from analysis_data for each field in the model
+                    if "diff_changes" in analysis_data:
+                        analysis.diff_changes = analysis_data["diff_changes"]
+                    
+                    # Store processing metrics
+                    if "processing_time_seconds" in analysis_data:
+                        analysis.processing_time_seconds = analysis_data["processing_time_seconds"]
+                    
+                    if "total_chunks_analyzed" in analysis_data:
+                        analysis.total_chunks_analyzed = analysis_data.get("total_chunks_analyzed", 0)
+                    
+                    # Store any remaining data in chunk_analyses JSON field
+                    analysis.chunk_analyses = analysis_data
                     analysis.status = status
                     analysis.updated_at = datetime.now()
                     await session.commit()
