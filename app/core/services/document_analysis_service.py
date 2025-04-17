@@ -44,6 +44,8 @@ class DocumentAnalysisService:
         Returns:
             Dictionary containing the analysis results
         """
+        # Define analysis_record at the beginning to avoid unbound variable errors
+        analysis_record = None
         try:
             logger.info(
                 f"Starting document analysis for doc {document_id} in organization {organization_id}"
@@ -172,11 +174,14 @@ class DocumentAnalysisService:
         except Exception as e:
             logger.error(f"Error analyzing document {document_id}: {str(e)}")
             # If we created an analysis record, update its status to failed
-            analysis_record_exists = 'analysis_record' in locals()
-            if analysis_record_exists and analysis_record:
-                await self.update_analysis_status(analysis_record.id,
-                                                  AnalysisStatus.FAILED,
-                                                  str(e))
+            try:
+                # Define analysis_record at the top of the function so it's always defined
+                if analysis_record is not None:
+                    await self.update_analysis_status(analysis_record.id,
+                                                    AnalysisStatus.FAILED,
+                                                    str(e))
+            except Exception as inner_exc:
+                logger.error(f"Error updating analysis status: {str(inner_exc)}")
             raise
 
     async def get_document_chunks(self,
@@ -255,16 +260,20 @@ class DocumentAnalysisService:
                 # We're now using a direct SQL approach with vector embedding
                 # filter_sql = " AND ".join(filter_conditions)
 
-                # Build the SQL query for vector similarity search - using bind parameters to be safer
-                # Need to use raw query with vector syntax
+                # PostgreSQL pgvector sorgu formatını düzenle
+                # Vektör verisi doğrudan formatlı string içerisine yerleştirilmeli
                 embedding_str = str(query_embedding).replace('[', '{').replace(
                     ']', '}')
-
-                # Build a safer SQL query using bind parameters where possible
-                sql_query = text("""
+                
+                # Vektör embeddingi için doğrudan SQL sorgusu formatla (pgvector özel syntax gerekiyor)
+                # PostgreSQL pgvector eklentisi bind parametreleriyle bazen sorun yaşayabiliyor
+                vector_portion = f"1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score"
+                
+                # Diğer parametreler için bind kullan
+                sql_query = text(f"""
                 SELECT 
                     kb.*,
-                    1 - (embedding <=> :query_embedding::vector) AS similarity_score
+                    {vector_portion}
                 FROM 
                     knowledge_base kb
                 WHERE 
@@ -277,7 +286,6 @@ class DocumentAnalysisService:
                 """)
 
                 params = {
-                    "query_embedding": embedding_str,
                     "org_id": organization_id,
                     "limit": limit
                 }
@@ -286,9 +294,16 @@ class DocumentAnalysisService:
                 if current_document_id is not None:
                     params["doc_id"] = current_document_id
 
-                # Execute the query
-                result = await session.execute(sql_query, params)
-                relevant_chunks = result.fetchall()
+                # Execute the query with error handling
+                try:
+                    logger.debug(f"Executing vector search query with params: {params}")
+                    result = await session.execute(sql_query, params)
+                    relevant_chunks = result.fetchall()
+                    logger.info(f"Vector search found {len(relevant_chunks)} relevant chunks") 
+                except Exception as query_exc:
+                    logger.error(f"Vector search query failed: {str(query_exc)}")
+                    # Return an empty list instead of raising to not block the entire flow
+                    return []
 
                 # Convert raw results to KnowledgeBase objects
                 relevant_kb_chunks = []
