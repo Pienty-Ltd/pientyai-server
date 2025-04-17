@@ -169,7 +169,7 @@ class DocumentAnalysisService:
         try:
             async with async_session_maker() as session:
                 query = select(KnowledgeBase).where(
-                    KnowledgeBase.document_id == document_id).order_by(
+                    KnowledgeBase.file_id == document_id).order_by(
                         KnowledgeBase.chunk_index)
 
                 result = await session.execute(query)
@@ -233,7 +233,7 @@ class DocumentAnalysisService:
 
                 # Exclude the current document if provided
                 if current_document_id is not None:
-                    filter_conditions.append("kb.document_id != :doc_id")
+                    filter_conditions.append("kb.file_id != :doc_id")
 
                 # Combine all filter conditions
                 filter_sql = " AND ".join(filter_conditions)
@@ -243,7 +243,7 @@ class DocumentAnalysisService:
                 WITH similarity_results AS (
                     SELECT kb.*, 
                            kb.embedding <=> :query_embedding AS distance,
-                           row_number() OVER (PARTITION BY kb.document_id ORDER BY kb.embedding <=> :query_embedding) as doc_rank
+                           row_number() OVER (PARTITION BY kb.file_id ORDER BY kb.embedding <=> :query_embedding) as doc_rank
                     FROM knowledge_base kb
                     WHERE {filter_sql}
                     ORDER BY kb.embedding <=> :query_embedding
@@ -278,7 +278,7 @@ class DocumentAnalysisService:
                     chunk_indices_by_doc = {}
 
                     for row in relevant_chunks:
-                        doc_id = row.document_id
+                        doc_id = row.file_id
                         chunk_idx = row.chunk_index
                         document_ids.add(doc_id)
 
@@ -295,7 +295,7 @@ class DocumentAnalysisService:
                     # This is more efficient than making multiple queries
                     adjacent_query = f"""
                     SELECT * FROM knowledge_base 
-                    WHERE document_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
+                    WHERE file_id = ANY(:doc_ids) AND is_knowledge_base = TRUE
                     """
                     result = await session.execute(
                         adjacent_query, {"doc_ids": list(document_ids)})
@@ -303,14 +303,13 @@ class DocumentAnalysisService:
 
                     # Filter to get only the chunks we want (primary + adjacent)
                     for chunk in all_chunks:
-                        doc_id = chunk.document_id
+                        doc_id = chunk.file_id
                         if doc_id in chunk_indices_by_doc and chunk.chunk_index in chunk_indices_by_doc[
                                 doc_id]:
                             # Create KnowledgeBase object
                             kb_chunk = KnowledgeBase(
                                 id=chunk.id,
                                 organization_id=chunk.organization_id,
-                                document_id=chunk.document_id,
                                 file_id=chunk.file_id,
                                 chunk_index=chunk.chunk_index,
                                 content=chunk.content,
@@ -326,7 +325,7 @@ class DocumentAnalysisService:
 
                 # Sort the chunks by document ID and chunk index to preserve the original structure
                 relevant_kb_chunks.sort(
-                    key=lambda x: (x.document_id, x.chunk_index))
+                    key=lambda x: (x.file_id, x.chunk_index))
 
                 return relevant_kb_chunks
 
@@ -353,7 +352,6 @@ class DocumentAnalysisService:
                 # Create new analysis record
                 analysis = DocumentAnalysis(
                     document_id=document_id,
-                    document_fp=file.fp,
                     organization_id=organization_id,
                     user_id=user_id,
                     status=AnalysisStatus.PENDING,
@@ -383,7 +381,7 @@ class DocumentAnalysisService:
 
                 if not file:
                     raise Exception(
-                        f"Document with fp {document_fp} not found")
+                        f"Document with fingerprint {document_fp} not found")
 
                 # Create new analysis record
                 analysis = DocumentAnalysis(
@@ -401,7 +399,8 @@ class DocumentAnalysisService:
                 return analysis
 
         except Exception as e:
-            logger.error(f"Error creating analysis record by fp: {str(e)}")
+            logger.error(
+                f"Error creating analysis record by fingerprint: {str(e)}")
             raise
 
     async def get_analysis_by_id(
@@ -517,10 +516,8 @@ class DocumentAnalysisService:
                     
                     # Store error message if provided
                     if error_message and status == AnalysisStatus.FAILED:
-                        # Store error message in metadata to avoid adding a separate column
-                        current_metadata = analysis.metadata or {}
-                        current_metadata["error_message"] = error_message
-                        analysis.metadata = current_metadata
+                        # Store error message directly in error_message column
+                        analysis.error_message = error_message
                         
                     await session.commit()
                     logger.info(
@@ -556,10 +553,8 @@ class DocumentAnalysisService:
                     
                     # Store error message if provided
                     if error_message and status == AnalysisStatus.FAILED:
-                        # Store error message in metadata to avoid adding a separate column
-                        current_metadata = analysis.metadata or {}
-                        current_metadata["error_message"] = error_message
-                        analysis.metadata = current_metadata
+                        # Store error message directly in error_message column
+                        analysis.error_message = error_message
                         
                     await session.commit()
                     logger.info(
@@ -570,7 +565,8 @@ class DocumentAnalysisService:
                     )
 
         except Exception as e:
-            logger.error(f"Error updating analysis status by fp: {str(e)}")
+            logger.error(
+                f"Error updating analysis status by fingerprint: {str(e)}")
             raise
 
     async def update_original_content(self, analysis_id: int,
@@ -615,7 +611,8 @@ class DocumentAnalysisService:
                     )
 
         except Exception as e:
-            logger.error(f"Error updating original content by fp: {str(e)}")
+            logger.error(
+                f"Error updating original content by fingerprint: {str(e)}")
             raise
 
     async def update_analysis_record(
@@ -637,15 +634,15 @@ class DocumentAnalysisService:
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
                     
-                    # Update metadata with additional analysis data
-                    metadata = analysis.metadata or {}
+                    # Update meta_data with additional analysis data
+                    meta_data = analysis.meta_data or {}
                     
-                    # Add selected fields to metadata
+                    # Add selected fields to meta_data
                     for field in ["total_chunks_analyzed", "processing_time_seconds", "chunk_analyses"]:
                         if field in analysis_data:
-                            metadata[field] = analysis_data[field]
+                            meta_data[field] = analysis_data[field]
                             
-                    analysis.metadata = metadata
+                    analysis.meta_data = meta_data
                     
                     await session.commit()
                     logger.info(f"Updated analysis record with ID {analysis_id}")
@@ -680,25 +677,24 @@ class DocumentAnalysisService:
                     if "diff_changes" in analysis_data:
                         analysis.diff_changes = analysis_data["diff_changes"]
                     
-                    # Update metadata with additional analysis data
-                    metadata = analysis.metadata or {}
+                    # Update meta_data with additional analysis data
+                    meta_data = analysis.meta_data or {}
                     
-                    # Add selected fields to metadata
+                    # Add selected fields to meta_data
                     for field in ["total_chunks_analyzed", "processing_time_seconds", "chunk_analyses"]:
                         if field in analysis_data:
-                            metadata[field] = analysis_data[field]
+                            meta_data[field] = analysis_data[field]
                             
-                    analysis.metadata = metadata
+                    analysis.meta_data = meta_data
                     
                     await session.commit()
-                    logger.info(
-                        f"Updated analysis record with fp {analysis_fp} with git-like diff changes"
-                    )
+                    logger.info(f"Updated analysis record {analysis_fp}")
                 else:
                     logger.warning(
-                        f"Analysis record with fp {analysis_fp} not found for update"
+                        f"Analysis record with fingerprint {analysis_fp} not found for update"
                     )
 
         except Exception as e:
-            logger.error(f"Error updating analysis record: {str(e)}")
+            logger.error(
+                f"Error updating analysis record by fingerprint: {str(e)}")
             raise

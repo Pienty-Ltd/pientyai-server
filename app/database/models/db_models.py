@@ -209,6 +209,7 @@ class DocumentAnalysis(Base):
     total_chunks_analyzed = Column(Integer, default=0)
     processing_time_seconds = Column(Numeric(10, 2), nullable=True)
     chunk_analyses = Column(JSON, nullable=True)  # Her chunk için detaylı analiz sonuçları
+    meta_data = Column(JSON, nullable=True)  # Additional metadata for the analysis
     
     # Gerekli önceki versiyon ve sonraki versiyon karşılaştırmaları için
     original_content = Column(Text, nullable=True)  # Orijinal içerik
