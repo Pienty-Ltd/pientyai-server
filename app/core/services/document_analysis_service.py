@@ -142,22 +142,23 @@ class DocumentAnalysisService:
                     chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
                     all_relevant_kb_chunks.add((chunk_key, kb_chunk))
                 
-                # Add adjacent chunks for better context (improve snippet context)
+                # Add adjacent chunks for better context but only get one before and one after (not two)
+                # This helps minimize duplicate chunks while still maintaining context
                 for kb_chunk in relevant_chunks:
                     try:
                         async with async_session_maker() as session:
-                            # Get up to 2 chunks before and after for context
+                            # Get only 1 chunk before and 1 after for context (reduced from 2 to minimize duplication)
                             before_query = select(KnowledgeBase).where(
                                 KnowledgeBase.file_id == kb_chunk.file_id,
                                 KnowledgeBase.is_knowledge_base == True,
-                                KnowledgeBase.chunk_index < kb_chunk.chunk_index
-                            ).order_by(desc(KnowledgeBase.chunk_index)).limit(2)
+                                KnowledgeBase.chunk_index == kb_chunk.chunk_index - 1  # Exactly one chunk before
+                            )
                             
                             after_query = select(KnowledgeBase).where(
                                 KnowledgeBase.file_id == kb_chunk.file_id,
                                 KnowledgeBase.is_knowledge_base == True,
-                                KnowledgeBase.chunk_index > kb_chunk.chunk_index
-                            ).order_by(KnowledgeBase.chunk_index).limit(2)
+                                KnowledgeBase.chunk_index == kb_chunk.chunk_index + 1  # Exactly one chunk after
+                            )
                             
                             before_result = await session.execute(before_query)
                             after_result = await session.execute(after_query)
@@ -165,7 +166,7 @@ class DocumentAnalysisService:
                             before_chunks = before_result.scalars().all()
                             after_chunks = after_result.scalars().all()
                             
-                            # Add all adjacent chunks to our set
+                            # Add adjacent chunks to our set
                             for adj_chunk in before_chunks + after_chunks:
                                 adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
                                 all_relevant_kb_chunks.add((adj_key, adj_chunk))
@@ -224,14 +225,73 @@ class DocumentAnalysisService:
             # Sort by similarity score (highest first)
             kb_chunks_with_metadata.sort(key=lambda x: x[1], reverse=True)
             
+            # IMPROVEMENT: Deduplicate chunks from the same document with nearby indices
+            # Group chunks by document_id for better selection
+            document_chunks = {}
+            for kb_info, score in kb_chunks_with_metadata:
+                doc_id = kb_info["document_id"]
+                if doc_id not in document_chunks:
+                    document_chunks[doc_id] = []
+                document_chunks[doc_id].append((kb_info, score))
+            
+            # Log document distribution for debugging
+            doc_count = {doc_id: len(chunks) for doc_id, chunks in document_chunks.items()}
+            logger.info(f"Knowledge base chunks distribution by document: {doc_count}")
+            
+            # Smart selection algorithm to get a diverse yet relevant set of chunks
+            deduplicated_chunks = []
+            max_per_document = 3  # Limit max chunks per document for diversity
+            
+            # First pass: Get top chunks from each document, ensuring no document dominates
+            for doc_id, chunks in document_chunks.items():
+                # Sort chunks for this document by similarity score (highest first)
+                chunks.sort(key=lambda x: x[1], reverse=True)
+                
+                # Track selected chunk indexes to avoid nearby duplicates
+                selected_indexes = set()
+                doc_selected_count = 0
+                
+                # Process chunks in order of relevance
+                for kb_info, score in chunks:
+                    if doc_selected_count >= max_per_document:
+                        break  # Limit reached for this document
+                        
+                    chunk_idx = kb_info["chunk_index"]
+                    
+                    # Check if this chunk or nearby chunks have already been selected
+                    nearby_exists = False
+                    for i in range(chunk_idx - 1, chunk_idx + 2):  # Check 1 before and 1 after
+                        if i in selected_indexes:
+                            nearby_exists = True
+                            break
+                    
+                    # If no nearby chunks selected, add this one
+                    if not nearby_exists:
+                        selected_indexes.add(chunk_idx)
+                        deduplicated_chunks.append((kb_info, score))
+                        doc_selected_count += 1
+            
+            # Sort all selected chunks by similarity score
+            deduplicated_chunks.sort(key=lambda x: x[1], reverse=True)
+            
+            # Calculate chunk distribution after deduplication
+            selected_doc_counts = {}
+            for kb_info, _ in deduplicated_chunks:
+                doc_id = kb_info["document_id"]
+                doc_name = kb_info["document_name"]
+                key = f"{doc_name} (ID: {doc_id})"
+                selected_doc_counts[key] = selected_doc_counts.get(key, 0) + 1
+                
+            logger.info(f"Selected chunks distribution after deduplication: {selected_doc_counts}")
+            
             # Token limiti nedeniyle chunk sayısını sınırla
             # En alakalı 10-15 chunk al, token limitini aşmamak için
-            max_chunks_to_include = min(15, len(kb_chunks_with_metadata))
+            max_chunks_to_include = min(15, len(deduplicated_chunks))
             
-            logger.info(f"Limiting KB chunks from {len(kb_chunks_with_metadata)} to {max_chunks_to_include} most relevant")
+            logger.info(f"Limiting KB chunks from {len(kb_chunks_with_metadata)} to {max_chunks_to_include} most relevant after deduplication")
             
             # Sadece en alakalı chunk'ları kullan
-            top_chunks = kb_chunks_with_metadata[:max_chunks_to_include]
+            top_chunks = deduplicated_chunks[:max_chunks_to_include]
             
             # Extract just the info objects
             formatted_kb_chunks = [chunk_data[0] for chunk_data in top_chunks]
