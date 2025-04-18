@@ -238,24 +238,19 @@ class DocumentAnalysisService:
             doc_count = {doc_id: len(chunks) for doc_id, chunks in document_chunks.items()}
             logger.info(f"Knowledge base chunks distribution by document: {doc_count}")
             
-            # Smart selection algorithm to get a diverse yet relevant set of chunks
+            # Smart deduplication algorithm to remove only nearby duplicates while keeping all relevant chunks
             deduplicated_chunks = []
-            max_per_document = 3  # Limit max chunks per document for diversity
             
-            # First pass: Get top chunks from each document, ensuring no document dominates
+            # Process each document's chunks
             for doc_id, chunks in document_chunks.items():
                 # Sort chunks for this document by similarity score (highest first)
                 chunks.sort(key=lambda x: x[1], reverse=True)
                 
                 # Track selected chunk indexes to avoid nearby duplicates
                 selected_indexes = set()
-                doc_selected_count = 0
                 
-                # Process chunks in order of relevance
+                # Process chunks in order of relevance (highest score first)
                 for kb_info, score in chunks:
-                    if doc_selected_count >= max_per_document:
-                        break  # Limit reached for this document
-                        
                     chunk_idx = kb_info["chunk_index"]
                     
                     # Check if this chunk or nearby chunks have already been selected
@@ -266,10 +261,39 @@ class DocumentAnalysisService:
                             break
                     
                     # If no nearby chunks selected, add this one
-                    if not nearby_exists:
+                    # Şu anda duplicate kontrolüne ek olarak, çok benzer içeriğe sahip chunk'ları da filtreliyoruz
+                    should_add = not nearby_exists
+                    
+                    # Son 3 eklenen chunk'ın içerik benzerliğini kontrol et
+                    # Bu işlevi kapsamlı benzerlik kontrolü yapmadan basit bir şekilde gerçekleştiriyoruz
+                    if should_add and len(deduplicated_chunks) > 0:
+                        # Sadece son birkaç eklenen chunk ile karşılaştır (performans için)
+                        for i in range(max(0, len(deduplicated_chunks)-3), len(deduplicated_chunks)):
+                            previous_chunk = deduplicated_chunks[i][0]
+                            # İçerik benzerliği çok yüksekse ekleme (başlık/numaralandırma farklılıkları hariç)
+                            if previous_chunk["document_id"] == kb_info["document_id"]:
+                                # Basit içerik benzerliği kontrolü - 100 karakterlik temsili kısım
+                                current_content = kb_info["content"][:100].lower()
+                                prev_content = previous_chunk["content"][:100].lower()
+                                
+                                # İçerik çok benzerse (başlangıçları çok benzer, aynı belge), atlama olasılığını artır
+                                if len(current_content) > 50 and len(prev_content) > 50:
+                                    # İlk 50 karakterdeki benzerlik çok fazlaysa
+                                    similarity = sum(1 for a, b in zip(current_content[:50], prev_content[:50]) if a == b) / 50
+                                    if similarity > 0.8:  # %80 veya daha fazla benzerlik
+                                        should_add = False
+                                        logger.debug(f"Skipping similar content chunk from {kb_info['document_name']} index {chunk_idx} (content similarity: {similarity:.2f})")
+                                        break
+                    
+                    if should_add:
                         selected_indexes.add(chunk_idx)
                         deduplicated_chunks.append((kb_info, score))
-                        doc_selected_count += 1
+                    else:
+                        # Log skipped chunk for debugging
+                        logger.debug(f"Skipping nearby chunk {kb_info['document_name']} index {chunk_idx} (score: {score:.4f})")
+                        
+                # Log how many chunks were selected from this document
+                logger.debug(f"Selected {len(selected_indexes)} chunks from document ID {doc_id} (from {len(chunks)} candidates)")
             
             # Sort all selected chunks by similarity score
             deduplicated_chunks.sort(key=lambda x: x[1], reverse=True)
@@ -284,14 +308,13 @@ class DocumentAnalysisService:
                 
             logger.info(f"Selected chunks distribution after deduplication: {selected_doc_counts}")
             
-            # Token limiti nedeniyle chunk sayısını sınırla
-            # En alakalı 10-15 chunk al, token limitini aşmamak için
-            max_chunks_to_include = min(15, len(deduplicated_chunks))
+            # Tüm deduplicate edilmiş chunk'ları kullan
+            # Gereksiz chunk kısıtlaması kaldırıldı - dokümanın gereksinim duyduğu tüm chunk'lar kullanılır
             
-            logger.info(f"Limiting KB chunks from {len(kb_chunks_with_metadata)} to {max_chunks_to_include} most relevant after deduplication")
+            logger.info(f"Using all {len(deduplicated_chunks)} deduplicated chunks from a total of {len(kb_chunks_with_metadata)}")
             
-            # Sadece en alakalı chunk'ları kullan
-            top_chunks = deduplicated_chunks[:max_chunks_to_include]
+            # Tüm filtrelenmiş chunk'ları kullan
+            top_chunks = deduplicated_chunks
             
             # Extract just the info objects
             formatted_kb_chunks = [chunk_data[0] for chunk_data in top_chunks]
@@ -468,8 +491,8 @@ class DocumentAnalysisService:
         Find the most relevant knowledge base chunks for a query text
         Only searches through actual knowledge base chunks (is_knowledge_base=True)
         
-        Also includes adjacent chunks (2 before and 2 after) for each relevant chunk to provide more context.
-        This helps avoid truncated information from chunk boundaries.
+        Also includes adjacent chunks (1 before and 1 after) for each relevant chunk to provide more context.
+        This helps avoid truncated information from chunk boundaries while minimizing duplication.
         
         Args:
             organization_id: ID of the organization
