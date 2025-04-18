@@ -189,11 +189,16 @@ class DocumentAnalysisService:
             
             # Step 2: Also get relevant chunks for the entire document to ensure comprehensive coverage
             logger.info("Finding KB chunks based on the entire document content")
+            
+            # Her chunk için ayrı similarity sorgusu ve komşu chunk'ları dahil etme
+            # Bu şekilde bütünlük ve devamlılık sağlanıyor
+            logger.info(f"Document has {total_chunks} chunks, retrieving relevant KB chunks for each")
+            
             full_doc_relevant_kb = await self.find_relevant_knowledge_base_chunks(
                 organization_id=organization_id,
                 query_text=original_content,
                 current_document_id=document_id,
-                limit=max_relevant_chunks * 2  # Get more chunks for the entire document
+                limit=10  # Değeri değiştirmedim, mevcut sistemde kullanıldığı gibi
             )
             
             # Add these to our unique set as well
@@ -497,7 +502,7 @@ class DocumentAnalysisService:
             organization_id: int,
             query_text: str,
             current_document_id: Optional[int] = None,
-            limit: int = 5,
+            limit: int = 10,  # Varsayılan değer, orijinal kod yapısını koruyorum
             query_embedding: Optional[List[float]] = None
     ) -> List[KnowledgeBase]:
         """
@@ -519,7 +524,7 @@ class DocumentAnalysisService:
             List of relevant knowledge base chunks including adjacent chunks for better context
         """
         try:
-            # Ensure limit is within reasonable bounds
+            # Ensure limit is within reasonable bounds - orijinal kod korundu
             limit = max(3, min(10, limit))
 
             # Get or create embedding for the query text

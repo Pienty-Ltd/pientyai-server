@@ -534,7 +534,9 @@ class OpenAIService:
               "diff_changes": "The complete corrected document with all changes already applied (not a diff)",
               "changes": [
                 {"original": "Original text segment that was changed", "corrected": "New corrected version of this segment", "reason": "Brief explanation of why this change was made"}
-              ]
+              ],
+              "processing_time_seconds": 0,
+              "total_chunks_analyzed": 0
             }
 
             CRITICAL INSTRUCTIONS:
@@ -542,13 +544,15 @@ class OpenAIService:
             - For Turkish documents, respond in Turkish. For English documents, respond in English, etc.
             - FORMAT CONSISTENTLY - Keep all section references in the same format as the original document
             - DO NOT mark changes with + or - symbols - just provide the final document as it should be
-            - INCLUDE a separate 'changes' array with detailed information about each modification
+            - You MUST include a 'changes' array with detailed information about each modification - this field is REQUIRED
+            - All responses MUST contain the 'changes' array even if no changes were made
             - Make corrections based on policies and information found in the knowledge base
             - Return the ENTIRE document, not just sections that were changed
             
             REMEMBER: 
             1. Return the completely corrected document in the 'diff_changes' field
-            2. Provide detailed information about each change in the 'changes' array including original text, corrected text, and reason
+            2. You MUST provide the 'changes' array with each change including original text, corrected text, and reason
+            3. The 'changes' array is a required field and must always be included in your response
             """
 
             # Format the knowledge base chunks as a JSON array for better structure
@@ -611,14 +615,55 @@ class OpenAIService:
                     try:
                         analysis_result = json.loads(response_content)
                         
+                        # GPT-4.1 prompt yanıtını zorlamamıza rağmen istenilen formatta dönmeyebilir
+                        # Bu durumda gerekli alanları ekleyelim ve uyumlu hale getirelim
+                        
                         # Eğer eski formatta yanıt döndüyse, yeni formata dönüştür
                         if "diff_changes" not in analysis_result:
                             # Sadece diff_changes formatını kullan, diğer tüm alanları yoksay
                             return {
                                 "diff_changes": analysis_result.get("diff", ""),
+                                "changes": [],  # Boş changes array ekle
                                 "processing_time_seconds": response.usage.total_tokens / 1000,  # Yaklaşık işlem süresi
                                 "total_chunks_analyzed": len(knowledge_base_chunks)
                             }
+                        
+                        # "changes" alanı yoksa ekle - bu kritik bir gereksinim
+                        if "changes" not in analysis_result:
+                            # Bir hata log'u ekleyelim
+                            logger.warning("OpenAI response format is missing 'changes' array. Attempting to create it.")
+                            
+                            try:
+                                # Değişiklikleri algılamak için dokümanı analiz etmeye çalışalım
+                                # NOT: Burada basitleştirilmiş bir yaklaşım kullanıyoruz, gerçek değişiklikleri belirlemek 
+                                # için daha gelişmiş bir algoritma gerekebilir
+                                
+                                # Basit değişiklik listesi oluştur
+                                analysis_result["changes"] = [
+                                    {
+                                        "original": "Değişiklikler otomatik olarak algılanamadı.",
+                                        "corrected": "Değişiklikler OpenAI'dan alınamadı, ancak düzeltilmiş doküman mevcut.",
+                                        "reason": "OpenAI API 'changes' dizisini döndürmedi."
+                                    }
+                                ]
+                                logger.info("Created a placeholder changes array since OpenAI didn't provide one")
+                            except Exception as change_err:
+                                # Değişiklik oluşturma hatası durumunda boş dizi kullan
+                                analysis_result["changes"] = []
+                                logger.error(f"Error creating changes array: {str(change_err)}")
+                        
+                        # Yapılandırılmış formatta olduğundan emin olalım
+                        if not isinstance(analysis_result["changes"], list):
+                            logger.warning("OpenAI returned 'changes' but it's not an array. Converting.")
+                            # Dizi değilse dizi haline getir
+                            original_changes = analysis_result["changes"]
+                            analysis_result["changes"] = [
+                                {
+                                    "original": "Format hatası",
+                                    "corrected": "Düzeltilmiş içerik mevcut",
+                                    "reason": f"OpenAI API yanıtı düzgün yapılandırılmamış: {str(original_changes)[:100]}"
+                                }
+                            ]
                         
                         return analysis_result
                     except json.JSONDecodeError as e:

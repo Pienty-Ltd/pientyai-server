@@ -70,3 +70,4 @@ flask-wtf
 flask-login
 flask-wtf
 openai
+openai
