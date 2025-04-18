@@ -605,7 +605,7 @@ class DocumentAnalysisService:
                     FROM knowledge_base
                     WHERE organization_id = :organization_id
                       AND is_knowledge_base = true
-                    ORDER BY similarity_score ASC
+                    ORDER BY similarity_score DESC
                     LIMIT :initial_limit
                 """)
 
