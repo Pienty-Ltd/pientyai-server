@@ -29,7 +29,7 @@ class DocumentAnalysisService:
             organization_id: int,
             document_id: int,
             user_id: int,
-            max_relevant_chunks: int = 5,
+            max_relevant_chunks: int = 15,  # Increased from 5 to 15 to get more KB chunks
             analysis_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Analyze a document against the organization's knowledge base
@@ -255,37 +255,32 @@ class DocumentAnalysisService:
                 for kb_info, score in chunks:
                     chunk_idx = kb_info["chunk_index"]
                     
-                    # Check if this chunk or nearby chunks have already been selected
-                    nearby_exists = False
-                    for i in range(chunk_idx - 1, chunk_idx + 2):  # Check 1 before and 1 after
-                        if i in selected_indexes:
-                            nearby_exists = True
-                            break
+                    # Sadece tam olarak aynı index'i kontrol et (daha az agresif)
+                    # Bu, daha fazla KB chunk'ın dahil edilmesini sağlar
+                    exact_duplicate = chunk_idx in selected_indexes
                     
-                    # If no nearby chunks selected, add this one
-                    # Şu anda duplicate kontrolüne ek olarak, çok benzer içeriğe sahip chunk'ları da filtreliyoruz
-                    should_add = not nearby_exists
+                    # Eğer tam olarak aynı chunk zaten seçilmişse, atla
+                    should_add = not exact_duplicate
                     
-                    # Son 3 eklenen chunk'ın içerik benzerliğini kontrol et
-                    # Bu işlevi kapsamlı benzerlik kontrolü yapmadan basit bir şekilde gerçekleştiriyoruz
+                    # 24 chunk olan bir dokümanda daha fazla KB chunk kullanmak için
+                    # içerik benzerliği filtrelemesini tamamen kaldırıyoruz.
+                    # Burada amaç, her doküman chunk'ı için en benzer KB chunklarını ve komşularını
+                    # mümkün olduğunca fazla korumaktır.
+                    
+                    # İçerik benzerliği kontrolünü çok yüksek bir değere ayarlayarak
+                    # neredeyse tamamen devre dışı bırakıyoruz (sadece %97 benzerlik olanları filtreler)
                     if should_add and len(deduplicated_chunks) > 0:
-                        # Sadece son birkaç eklenen chunk ile karşılaştır (performans için)
-                        for i in range(max(0, len(deduplicated_chunks)-3), len(deduplicated_chunks)):
+                        # Sadece tam olarak aynı içeriğe sahip olanları filtrele
+                        # Önceki gibi, son birkaç eklenen chunk ile karşılaştır
+                        for i in range(max(0, len(deduplicated_chunks)-2), len(deduplicated_chunks)):
                             previous_chunk = deduplicated_chunks[i][0]
-                            # İçerik benzerliği çok yüksekse ekleme (başlık/numaralandırma farklılıkları hariç)
-                            if previous_chunk["document_id"] == kb_info["document_id"]:
-                                # Basit içerik benzerliği kontrolü - 100 karakterlik temsili kısım
-                                current_content = kb_info["content"][:100].lower()
-                                prev_content = previous_chunk["content"][:100].lower()
-                                
-                                # İçerik çok benzerse (başlangıçları çok benzer, aynı belge), atlama olasılığını artır
-                                if len(current_content) > 50 and len(prev_content) > 50:
-                                    # İlk 50 karakterdeki benzerlik çok fazlaysa
-                                    similarity = sum(1 for a, b in zip(current_content[:50], prev_content[:50]) if a == b) / 50
-                                    if similarity > 0.8:  # %80 veya daha fazla benzerlik
-                                        should_add = False
-                                        logger.debug(f"Skipping similar content chunk from {kb_info['document_name']} index {chunk_idx} (content similarity: {similarity:.2f})")
-                                        break
+                            
+                            # Tam olarak aynı içerik varsa (duplicate içerik) filtrele
+                            if (previous_chunk["document_id"] == kb_info["document_id"] and 
+                                previous_chunk["content"] == kb_info["content"]):
+                                should_add = False
+                                logger.debug(f"Skipping exact duplicate content from {kb_info['document_name']} index {chunk_idx}")
+                                break
                     
                     if should_add:
                         selected_indexes.add(chunk_idx)
@@ -493,14 +488,14 @@ class DocumentAnalysisService:
         Find the most relevant knowledge base chunks for a query text
         Only searches through actual knowledge base chunks (is_knowledge_base=True)
         
-        Includes the most similar chunk and its adjacent chunks (one before and one after) for better context.
-        This helps avoid truncated information from chunk boundaries while minimizing duplication.
+        Retrieves multiple similar KB chunks along with their adjacent chunks (one before and one after each).
+        This provides better context and ensures adequate coverage for each document chunk.
         
         Args:
             organization_id: ID of the organization
             query_text: Text to search for (usually a chunk from the document to analyze)
             current_document_id: Optional ID of the current document to exclude from results
-            limit: Maximum number of chunks to return (between 3 and 10)
+            limit: Maximum number of chunks to return (between 3 and 20)
             query_embedding: Optional pre-generated embedding vector for the query text.
                             If provided, skips embedding generation to improve performance.
             
@@ -508,20 +503,25 @@ class DocumentAnalysisService:
             List of relevant knowledge base chunks including adjacent chunks for better context
         """
         try:
-            # Ensure limit is within reasonable bounds
-            limit = max(3, min(10, limit))
+            # Ensure limit is within reasonable bounds - larger limit to ensure better coverage
+            # We're now getting more matching chunks per document chunk
+            limit = max(5, min(20, limit))
 
             # Get or create embedding for the query text
             if not query_embedding:
                 query_embedding = await self.openai_service.get_embedding(
                     query_text)
 
-            # Use vector similarity search to find the most relevant chunks
+            # Use vector similarity search to find multiple similar chunks
             async with async_session_maker() as session:
                 from sqlalchemy import text
                 embedding_string = json.dumps(query_embedding)
 
-                # SQL query to find the single most similar KB chunk
+                # Get more similar chunks initially - we'll add their neighbors later
+                # Burada belge başına daha fazla KB chunk alıyoruz (en az 3 adet, limit/3 kadar)
+                initial_limit = max(3, min(limit // 3, 5))  # Get more chunks initially - at least 3, at most 5
+                
+                # SQL query to find multiple similar KB chunks
                 sql_query = text(f"""
                     SELECT
                         *,
@@ -531,7 +531,7 @@ class DocumentAnalysisService:
                       AND is_knowledge_base = true
                       {f"AND file_id != :current_document_id" if current_document_id else ""}
                     ORDER BY similarity_score ASC
-                    LIMIT 1
+                    LIMIT :initial_limit
                 """)
 
                 result = await session.execute(
@@ -539,78 +539,105 @@ class DocumentAnalysisService:
                     {
                         "query_embedding": embedding_string,
                         "organization_id": organization_id,
-                        "current_document_id": current_document_id
+                        "current_document_id": current_document_id,
+                        "initial_limit": initial_limit
                     })
 
-                # Get the most similar chunk
-                most_similar_row = result.first()
+                # Get all similar chunks
+                similar_rows = result.fetchall()
                 
-                if not most_similar_row:
+                if not similar_rows:
                     logger.warning(f"No similar KB chunks found for query in organization {organization_id}")
                     return []
                 
-                # Create a KB object for the most similar chunk
-                most_similar_chunk = KnowledgeBase(
-                    id=most_similar_row.id,
-                    fp=most_similar_row.fp,
-                    organization_id=most_similar_row.organization_id,
-                    file_id=most_similar_row.file_id,
-                    chunk_index=most_similar_row.chunk_index,
-                    content=most_similar_row.content,
-                    embedding=most_similar_row.embedding,
-                    meta_info=most_similar_row.meta_info,
-                    is_knowledge_base=most_similar_row.is_knowledge_base,
-                    created_at=most_similar_row.created_at,
-                )
-                setattr(most_similar_chunk, 'similarity_score', most_similar_row.similarity_score)
+                # Create KB objects for the similar chunks
+                # Map to track unique chunks by fingerprint
+                fp_to_chunks = {}
+                result_chunks = []
                 
-                # Find adjacent chunks (previous and next) from the same document
-                document_id = most_similar_chunk.file_id
-                chunk_index = most_similar_chunk.chunk_index
-                
-                # Create a set to store all chunks to return
-                all_chunks = set()
-                all_chunks.add(most_similar_chunk.fp)
-                
-                # List to store knowledge base chunks with their similarity scores
-                final_chunks = [most_similar_chunk]
-                
-                # Get previous chunk if it exists
-                if chunk_index > 0:
-                    prev_query = select(KnowledgeBase).where(
+                # Process each similar chunk and add its neighbors
+                for row in similar_rows:
+                    # Create KB object for this similar chunk
+                    kb_chunk = KnowledgeBase(
+                        id=row.id,
+                        fp=row.fp,
+                        organization_id=row.organization_id,
+                        file_id=row.file_id,
+                        chunk_index=row.chunk_index,
+                        content=row.content,
+                        embedding=row.embedding,
+                        meta_info=row.meta_info,
+                        is_knowledge_base=row.is_knowledge_base,
+                        created_at=row.created_at,
+                    )
+                    setattr(kb_chunk, 'similarity_score', row.similarity_score)
+                    
+                    # Add to our collection if not already there
+                    if kb_chunk.fp not in fp_to_chunks:
+                        fp_to_chunks[kb_chunk.fp] = kb_chunk
+                        result_chunks.append(kb_chunk)
+                    
+                    # Find and add adjacent chunks (previous and next)
+                    document_id = kb_chunk.file_id
+                    chunk_index = kb_chunk.chunk_index
+                    
+                    # Get previous chunk if it exists
+                    if chunk_index > 0:
+                        prev_query = select(KnowledgeBase).where(
+                            KnowledgeBase.file_id == document_id,
+                            KnowledgeBase.chunk_index == chunk_index - 1,
+                            KnowledgeBase.is_knowledge_base == True
+                        )
+                        prev_result = await session.execute(prev_query)
+                        prev_chunk = prev_result.scalar_one_or_none()
+                        
+                        if prev_chunk and prev_chunk.fp not in fp_to_chunks:
+                            # Set a synthetic similarity score slightly lower than the similar chunk
+                            setattr(prev_chunk, 'similarity_score', getattr(kb_chunk, 'similarity_score', 0) + 0.01)
+                            fp_to_chunks[prev_chunk.fp] = prev_chunk
+                            result_chunks.append(prev_chunk)
+                    
+                    # Get next chunk if it exists
+                    next_query = select(KnowledgeBase).where(
                         KnowledgeBase.file_id == document_id,
-                        KnowledgeBase.chunk_index == chunk_index - 1,
+                        KnowledgeBase.chunk_index == chunk_index + 1,
                         KnowledgeBase.is_knowledge_base == True
                     )
-                    prev_result = await session.execute(prev_query)
-                    prev_chunk = prev_result.scalar_one_or_none()
+                    next_result = await session.execute(next_query)
+                    next_chunk = next_result.scalar_one_or_none()
                     
-                    if prev_chunk and prev_chunk.fp not in all_chunks:
-                        all_chunks.add(prev_chunk.fp)
-                        # Set a synthetic similarity score slightly lower than the most similar chunk
-                        setattr(prev_chunk, 'similarity_score', getattr(most_similar_chunk, 'similarity_score', 0) + 0.01)
-                        final_chunks.append(prev_chunk)
+                    if next_chunk and next_chunk.fp not in fp_to_chunks:
+                        # Set a synthetic similarity score slightly lower than the similar chunk
+                        setattr(next_chunk, 'similarity_score', getattr(kb_chunk, 'similarity_score', 0) + 0.02)
+                        fp_to_chunks[next_chunk.fp] = next_chunk
+                        result_chunks.append(next_chunk)
                 
-                # Get next chunk if it exists
-                next_query = select(KnowledgeBase).where(
-                    KnowledgeBase.file_id == document_id,
-                    KnowledgeBase.chunk_index == chunk_index + 1,
-                    KnowledgeBase.is_knowledge_base == True
-                )
-                next_result = await session.execute(next_query)
-                next_chunk = next_result.scalar_one_or_none()
+                # Group chunks by document ID and sort by chunk index to maintain document flow
+                # This helps maintain context within each document
+                grouped_chunks = {}
+                for chunk in result_chunks:
+                    if chunk.file_id not in grouped_chunks:
+                        grouped_chunks[chunk.file_id] = []
+                    grouped_chunks[chunk.file_id].append(chunk)
                 
-                if next_chunk and next_chunk.fp not in all_chunks:
-                    all_chunks.add(next_chunk.fp)
-                    # Set a synthetic similarity score slightly lower than the most similar chunk
-                    setattr(next_chunk, 'similarity_score', getattr(most_similar_chunk, 'similarity_score', 0) + 0.02)
-                    final_chunks.append(next_chunk)
+                # Sort each document's chunks by index
+                sorted_chunks = []
+                for doc_id, chunks in grouped_chunks.items():
+                    # Sort this document's chunks by index
+                    chunks.sort(key=lambda x: x.chunk_index)
+                    # Add to final result
+                    sorted_chunks.extend(chunks)
                 
-                # Sort by chunk index to maintain document flow
-                final_chunks.sort(key=lambda x: x.chunk_index)
+                # For consistency with rest of code, sort by similarity score
+                # But maintain document grouping
+                sorted_chunks.sort(key=lambda x: getattr(x, 'similarity_score', 0))
                 
-                logger.info(f"Found most similar chunk {document_id}:{chunk_index} with {len(final_chunks)} total chunks (including adjacent)")
-                return final_chunks
+                # Limit total chunks if we have too many
+                if len(sorted_chunks) > limit:
+                    sorted_chunks = sorted_chunks[:limit]
+                
+                logger.info(f"Found {len(similar_rows)} similar chunks with {len(sorted_chunks)} total chunks (including adjacent)")
+                return sorted_chunks
                 
         except Exception as e:
             # Daha ayrıntılı hata günlüğü kaydı
