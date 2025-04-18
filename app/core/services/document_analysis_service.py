@@ -601,11 +601,11 @@ class DocumentAnalysisService:
                 sql_query = text(f"""
                     SELECT
                         *,
-                        embedding::vector <=> :query_embedding::vector AS similarity_score
+                        1 - (embedding::vector <=> :query_embedding::vector) AS similarity_score
                     FROM knowledge_base
                     WHERE organization_id = :organization_id
                       AND is_knowledge_base = true
-                    ORDER BY similarity_score DESC
+                    ORDER BY similarity_score DESC  -- DESC ile en yüksek benzerlik değeri önce gelir
                     LIMIT :initial_limit
                 """)
 
