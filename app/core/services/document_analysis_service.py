@@ -142,10 +142,15 @@ class DocumentAnalysisService:
                     chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
                     all_relevant_kb_chunks.add((chunk_key, kb_chunk))
                 
-                # Add adjacent chunks for better context but only get one before and one after (not two)
-                # This helps minimize duplicate chunks while still maintaining context
+                # Add both the original high-similarity chunks AND adjacent chunks for better context
+                # This helps provide complete information while minimizing duplication
                 for kb_chunk in relevant_chunks:
                     try:
+                        # First make sure to add the original chunk that scored high on similarity
+                        chunk_key = f"{kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                        all_relevant_kb_chunks.add((chunk_key, kb_chunk))
+                        
+                        # Then add the adjacent chunks (1 before and 1 after)
                         async with async_session_maker() as session:
                             # Get only 1 chunk before and 1 after for context (reduced from 2 to minimize duplication)
                             before_query = select(KnowledgeBase).where(
@@ -170,6 +175,14 @@ class DocumentAnalysisService:
                             for adj_chunk in before_chunks + after_chunks:
                                 adj_key = f"{adj_chunk.file_id}_{adj_chunk.chunk_index}"
                                 all_relevant_kb_chunks.add((adj_key, adj_chunk))
+                            
+                            # Log which chunks were added for debugging
+                            chunk_info = f"Original: {kb_chunk.file_id}_{kb_chunk.chunk_index}"
+                            if before_chunks:
+                                chunk_info += f", Before: {before_chunks[0].file_id}_{before_chunks[0].chunk_index}"
+                            if after_chunks:
+                                chunk_info += f", After: {after_chunks[0].file_id}_{after_chunks[0].chunk_index}"
+                            logger.debug(f"Added chunks: {chunk_info}")
                     except Exception as e:
                         logger.warning(f"Error getting adjacent chunks: {str(e)}")
                         # Continue even if we can't get adjacent chunks
